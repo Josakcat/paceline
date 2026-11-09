@@ -80,6 +80,12 @@ enum AIOrder {
         return out.filter { seen.insert($0).inserted }
     }
 
+    /// The slot a row dragged `offset` points from `start` lands in: one slot per
+    /// `rowHeight`, past half a row, kept inside the list.
+    static func dropIndex(start: Int, offset: Double, rowHeight: Double, count: Int) -> Int {
+        min(max(start + Int((offset / rowHeight).rounded()), 0), count - 1)
+    }
+
     /// `shown` with the rows at `from` moved before `to` (List.onMove's terms), merged into `saved`.
     static func moved(_ shown: [String], from: IndexSet, to: Int, saved: [String]) -> [String] {
         var keys = shown

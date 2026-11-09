@@ -18,6 +18,8 @@ struct SettingsView: View {
     @State private var loadingAccounts = false
     @State private var removing: ClaudeAccount?
     @State private var foundName = ""
+    @State private var dragKey: String?    // Order: the row being dragged, and how far
+    @State private var dragY: CGFloat = 0
     @AppStorage("accountsOpenReady", store: Demo.defaults) private var openReady = true
     @AppStorage("accountsOpenNeedsSignIn", store: Demo.defaults) private var openNeedsSignIn = true
     @AppStorage("accountsShowNotInstalled", store: Demo.defaults) private var openNotInstalled = false
@@ -153,32 +155,54 @@ struct SettingsView: View {
         .controlSize(.small)   // small switches: shorter rows
     }
 
-    /// The AIs with numbers now, in the menu bar's order: drag a row, or use its
-    /// arrows (VoiceOver, keyboard). The panel's rows follow the same order.
+    /// The AIs with numbers now, in the menu bar's order: press anywhere on a row
+    /// and drag it; the others make room as it goes. VoiceOver gets Move up/down.
+    /// The panel's rows follow the same order.
     @ViewBuilder private var orderRows: some View {
         let readings = model.aiReadings
         let keys = readings.map { model.orderKey($0.name) }
+        let h: CGFloat = 26
+        let start = dragKey.flatMap { keys.firstIndex(of: $0) }
+        let target = start.map { AIOrder.dropIndex(start: $0, offset: dragY, rowHeight: h, count: keys.count) }
+        let shown: [Int] = {   // indexes into readings, as they show while dragging
+            var idx = Array(readings.indices)
+            if let start, let target { idx.insert(idx.remove(at: start), at: target) }
+            return idx
+        }()
         if readings.count > 1 {
             // Folded, a row of logos in order: General stays one screen tall.
             DisclosureGroup(isExpanded: $model.orderExpanded) {
-                ForEach(Array(readings.enumerated()), id: \.element.name) { i, reading in
-                    HStack(spacing: 7) {
-                        Image(systemName: "line.3.horizontal").font(.system(size: 10)).foregroundStyle(.tertiary).accessibilityHidden(true)
-                        Image(nsImage: AILogos.listIcon(for: reading.name, size: 16)).accessibilityHidden(true)
-                        Text(reading.name).lineLimit(1)
-                        Spacer()
-                        Text(reading.text).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
-                        Button { move(keys, from: i, to: i - 1) } label: { Image(systemName: "chevron.up") }
-                            .buttonStyle(.borderless).disabled(i == 0)
-                            .accessibilityLabel("Move \(reading.name) up")
-                        Button { move(keys, from: i, to: i + 2) } label: { Image(systemName: "chevron.down") }
-                            .buttonStyle(.borderless).disabled(i == readings.count - 1)
-                            .accessibilityLabel("Move \(reading.name) down")
+                VStack(spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.element) { pos, i in
+                        let reading = readings[i], lifted = keys[i] == dragKey
+                        HStack(spacing: 7) {
+                            Image(systemName: "line.3.horizontal").font(.system(size: 10)).foregroundStyle(.tertiary).accessibilityHidden(true)
+                            Image(nsImage: AILogos.listIcon(for: reading.name, size: 16)).accessibilityHidden(true)
+                            Text(reading.name).lineLimit(1)
+                            Spacer()
+                            Text(reading.text).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 6)
+                        .frame(height: h)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(lifted ? 0.09 : 0)))
+                        .shadow(color: .black.opacity(lifted ? 0.2 : 0), radius: 4, y: 2)
+                        .offset(y: lifted ? dragY - CGFloat(pos - i) * h : 0)   // follows the pointer; its slot moved pos - i rows
+                        .zIndex(lifted ? 1 : 0)
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)   // global: the row itself moves
+                            .onChanged { dragKey = keys[i]; dragY = $0.translation.height }
+                            .onEnded { v in
+                                let to = AIOrder.dropIndex(start: i, offset: v.translation.height, rowHeight: h, count: keys.count)
+                                dragKey = nil; dragY = 0
+                                if to != i { move(keys, from: i, to: to > i ? to + 1 : to) }
+                            })
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(reading.name), \(i + 1) of \(readings.count)")
+                        .accessibilityAction(named: "Move up") { if i > 0 { move(keys, from: i, to: i - 1) } }
+                        .accessibilityAction(named: "Move down") { if i < keys.count - 1 { move(keys, from: i, to: i + 2) } }
                     }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("\(reading.name), \(i + 1) of \(readings.count)")
                 }
-                .onMove { from, to in controller.setAIOrder(AIOrder.moved(keys, from: from, to: to, saved: model.aiOrder)) }
+                .animation(.easeOut(duration: 0.12), value: target)
                 HStack {
                     Spacer()
                     Button("Reset Order") { controller.setAIOrder([]) }.disabled(model.aiOrder.isEmpty)
@@ -187,7 +211,7 @@ struct SettingsView: View {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Order").font(.body)
-                        Text("Menu bar and panel. Drag or use the arrows.").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        Text("Menu bar and panel. Drag a row to move it.").font(.system(size: 10.5)).foregroundStyle(.secondary)
                     }
                     Spacer()
                     HStack(spacing: 3) {

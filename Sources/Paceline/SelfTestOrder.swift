@@ -31,6 +31,10 @@ extension SelfTest {
         check(merged == ["Antigravity", "Claude", "Codex", "Cursor"], "one not shown now keeps its place → \(merged)")
         check(AIOrder.merged([], saved: saved) == saved, "nothing shown: the saved order stays")
 
+        // Dragging a row: one slot per row height, past half a row, never off the list.
+        let drops = [(1, 12.0), (1, 14.0), (1, -40.0), (0, -200.0), (2, 500.0)].map { AIOrder.dropIndex(start: $0.0, offset: $0.1, rowHeight: 26, count: 4) }
+        check(drops == [1, 2, 0, 0, 3], "drag: under half a row stays, past it moves, clamped at both ends → \(drops)")
+
         // Extra Claude accounts go by id: a rename keeps the place, a removal leaves the rest.
         let work = ClaudeAccount(id: "work", name: "Work", configDir: "/tmp/w")
         check(AIOrder.key("Work", accounts: [work]) == "Claude:work" && AIOrder.key("Codex", accounts: [work]) == "Codex",
