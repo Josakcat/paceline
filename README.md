@@ -75,7 +75,7 @@ open ~/Applications/Paceline.app
 
 `scripts/build-app.sh --universal` builds for Apple silicon and Intel. `scripts/make-dmg.sh` makes a disk image.
 
-**Or download a release.** Releases aren't notarized yet. The first time you open it, macOS blocks it: go to **System Settings → Privacy & Security** and choose **Open Anyway**.
+**Or download a release.** Releases aren't notarized yet. The first time you open it, macOS says it can't verify the app: choose **Done**, not **Move to Trash**. Then go to **System Settings → Privacy & Security** and choose **Open Anyway**.
 
 **Homebrew** (coming soon): `brew install --cask josakcat/tap/paceline`.
 
