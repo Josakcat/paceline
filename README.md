@@ -4,7 +4,7 @@ A macOS menu bar app that shows how much of your AI plans you have left, and whe
 
 - **All your AI plans in one menu bar item.** 13 AI tools. Several Claude Code accounts (personal, work, …), Codex and Antigravity, each with its logo and the percentage left. Windsurf's daily and weekly limits, tokens and $ from OpenCode, Cline, Roo Code, Kilo Code, Gemini CLI and Amp, and who's signed in to Cursor, Copilot and Kiro.
 - **Pace, not just percent.** At the rate you've used a 5-hour or weekly limit so far, Paceline tells you if it runs out before it resets, and when: "Runs out in 1h 12m".
-- **Local only.** It reads files these tools already keep on your Mac. No browser cookies, no API keys, no tokens. The only network request of its own is **Check for Updates…**, when you click it.
+- **Local only.** It reads files these tools already keep on your Mac. No browser cookies, no API keys, no tokens. The only network request of its own is the update check: **Check for Updates…** when you click it, or once a day if you turn on **Install updates automatically**.
 
 <p align="center">
   <img src="docs/screenshots/menubar-compact.png" alt="Menu bar: each AI's logo with its percentage left, or today's tokens" width="363"><br>
@@ -79,7 +79,9 @@ open ~/Applications/Paceline.app
 
 **Homebrew:** `brew install --cask josakcat/tap/paceline`. Update with `brew upgrade --cask paceline`.
 
-**Updates.** Use **Check for Updates…** in the right-click menu or in Settings → General. It asks GitHub for the latest release and opens its page. Paceline never checks by itself.
+**Updates.** Use **Check for Updates…** in the right-click menu or in Settings → General. It asks GitHub for the latest release and offers **Install and Relaunch** or its page. **Install updates automatically** (Settings → General, off by default) checks at launch and once a day, and installs a newer release while you aren't using Paceline. A copy from Homebrew updates with `brew upgrade --cask paceline` instead.
+
+Each update is checked against the release's sha256 file. That proves the download is complete and unchanged in transit, but it isn't a signature: Paceline is ad-hoc signed and not notarized.
 
 ## Plan limits: the easy way
 

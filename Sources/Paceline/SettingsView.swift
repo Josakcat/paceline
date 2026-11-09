@@ -23,6 +23,7 @@ struct SettingsView: View {
     @AppStorage("accountsOpenReady", store: Demo.defaults) private var openReady = true
     @AppStorage("accountsOpenNeedsSignIn", store: Demo.defaults) private var openNeedsSignIn = true
     @AppStorage("accountsShowNotInstalled", store: Demo.defaults) private var openNotInstalled = false
+    @AppStorage(Updates.autoKey, store: Demo.defaults) private var autoUpdate = false
 
     var body: some View {
         TabView(selection: $model.settingsTab) {
@@ -149,6 +150,15 @@ struct SettingsView: View {
                     Text("Version")
                     Text("Local files only; online only to check for updates.")
                 }
+                Toggle(isOn: $autoUpdate) {
+                    Text("Install updates automatically")
+                    if let reason = Updates.notUpdatableReason(Updates.thisInstall()) {
+                        Text(reason)
+                    } else {
+                        Text("At launch and once a day; checks the sha256, then relaunches.")
+                    }
+                }
+                .onChange(of: autoUpdate) { _, _ in Updates.startAuto() }
             }   // no header: the closing rows, as in System Settings
         }
         .formStyle(.grouped)

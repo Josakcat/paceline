@@ -27,6 +27,7 @@ enum SelfTest {
         failures += accountsLayoutTests()
         failures += followupTests()
         failures += chartLegendTests()
+        failures += updateTests()
         print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
         return failures == 0
     }

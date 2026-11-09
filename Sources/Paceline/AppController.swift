@@ -70,6 +70,7 @@ final class AppController {
         applySharing()
         updateStatusItem()
 
+        Updates.startAuto()   // only if "Install updates automatically" is on
         if model.debugEndpoints { listenForDebugCommands() }
     }
 
