@@ -502,12 +502,9 @@ struct SettingsView: View {
                    remove: account)
     }
 
-    /// Status and a Copy button; how it works stays folded once there's data.
+    /// Status, a Copy button and how it works. Nothing folds: a popover that changes
+    /// size draws its content scaled while it grows, so the text to copy shows only until there's data.
     @ViewBuilder private func planLimits(status: String, hasData: Bool, copy: String, how: String, remove: ClaudeAccount? = nil) -> some View {
-        let instructions = VStack(alignment: .leading, spacing: 6) {
-            Text(how).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(copy).font(.system(size: 10.5, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-        }
         HStack {
             Text("Plan limits: \(status)").font(.caption).foregroundStyle(.secondary)
             Spacer()
@@ -518,10 +515,9 @@ struct SettingsView: View {
             .controlSize(.small)
             if let remove { Button("Remove…") { model.accountDetails = nil; removing = remove }.controlSize(.small) }
         }
-        if hasData {
-            DisclosureGroup("How plan limits are read") { instructions }.font(.caption)
-        } else {
-            instructions
+        Text(how).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        if !hasData {
+            Text(copy).font(.system(size: 10.5, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
     }
 
