@@ -44,7 +44,7 @@ A macOS menu bar app that shows how much of your AI plans you have left, and whe
 - Plan limits left per account, with reset times
 - "On pace" or "Runs out in …"
 - Today's API-equivalent spend and tokens, by Claude account, by model and by project. Models without a known price say "price unknown" instead of showing $0.00.
-- The last 7 days as small bars, split by AI (each Claude account its own colour), with a legend under them. Paceline keeps a daily summary for 30 days in `~/Library/Application Support/Paceline/history.json`: tokens and $ per AI, and the lowest 5-hour and weekly percentages left. It writes the file at most every 5 minutes.
+- The last 7 days as small bars, split by AI (each Claude account its own colour), with a legend under them that gives each AI's 7-day total. An AI that used only a little still gets a thin visible slice; the totals stay exact. Paceline keeps a daily summary for 30 days in `~/Library/Application Support/Paceline/history.json`: tokens and $ per AI, and the lowest 5-hour and weekly percentages left. It writes the file at most every 5 minutes.
 
 Old data is dimmed and says how old it is.
 

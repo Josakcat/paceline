@@ -60,6 +60,15 @@ extension SelfTest {
         func blocked(_ k: Updates.InstallKind) -> Bool { if case .notUpdatable = k { true } else { false } }
         check(blocked(volumes) && blocked(translocated) && blocked(readOnly) && blocked(kind("/usr/local/bin/Paceline")),
               "a disk image, AppTranslocation, a read-only folder or no .app can't update")
+
+        func from(_ args: [String]) -> String? { Updates.checkVersion(arguments: ["Paceline", "--check-update"] + args, current: "0.1.2") }
+        check(from([]) == "0.1.2", "--check-update checks this copy's version without --from")
+        check(from(["--from", "0.1.1"]) == "0.1.1" && from(["--from", "v0.1.1"]) == "v0.1.1" && from(["--from", "1.0.0-beta.2"]) == "1.0.0-beta.2",
+              "--from takes 0.1.1, v0.1.1 or a pre-release")
+        check(from(["--from"]) == nil && from(["--from", "latest"]) == nil && from(["--from", "0.1."]) == nil && from(["--from", ""]) == nil,
+              "--from with no value, a word or a broken version is refused")
+        check(Updates.isNewer("v0.1.2", than: from(["--from", "0.1.1"])!) && !Updates.isNewer("v0.1.2", than: from([])!),
+              "--from 0.1.1 finds v0.1.2 newer; 0.1.2 itself is up to date")
         return failures
     }
 }

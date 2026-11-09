@@ -231,23 +231,38 @@ enum Updates {
     /// Downloads, checks the sha256, unzips beside the app (same volume), checks the new
     /// app, and swaps it in. Throws before touching the installed app if anything's off.
     private static func download(_ release: Release, replacing appURL: URL, bundleID: String, version: String) async throws {
-        guard let assets = release.assets else { throw Failure(reason: "The release has no Paceline.zip with a checksum.") }
         let fm = FileManager.default
         let work: URL
         do {
             work = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: appURL, create: true)
         } catch { throw Failure(reason: "Couldn't make a folder for the download.") }
         defer { try? fm.removeItem(at: work) }
+        let newApp = try await fetchAndCheck(release, into: work, bundleID: bundleID, version: version)
+        try await Task.detached {
+            do {
+                _ = try FileManager.default.replaceItemAt(appURL, withItemAt: newApp)
+            } catch { throw Failure(reason: "Couldn't replace the app: \(error.localizedDescription)") }
+        }.value
+    }
+
+    /// Downloads the .sha256 and the zip into `work`, checks the hash, unzips, and checks the
+    /// app inside: its bundle id, that it's newer than `version`, and its code signature.
+    /// Returns that app, still in `work`. `passed` hears each step that checks out.
+    static func fetchAndCheck(_ release: Release, into work: URL, bundleID: String, version: String,
+                              passed: @escaping @Sendable (String) -> Void = { _ in }) async throws -> URL {
+        guard let assets = release.assets else { throw Failure(reason: "The release has no Paceline.zip with a checksum.") }
+        let fm = FileManager.default
 
         func get(_ url: URL) async throws -> URL {
             guard url.scheme == "https" else { throw Failure(reason: "The download isn't over HTTPS.") }
             let (file, response) = try await URLSession.shared.download(for: URLRequest(url: url, timeoutInterval: 120))
             guard (response as? HTTPURLResponse)?.statusCode == 200, response.url?.scheme == "https" else {
                 try? fm.removeItem(at: file)
-                throw Failure(reason: "The download failed.")
+                throw Failure(reason: "The download of \(url.lastPathComponent) failed.")
             }
             let kept = work.appendingPathComponent(UUID().uuidString)
             try fm.moveItem(at: file, to: kept)
+            passed("Downloaded \(url.lastPathComponent)")
             return kept
         }
         let sumFile = try await get(assets.checksum)
@@ -256,29 +271,92 @@ enum Updates {
         }
         let zip = try await get(assets.zip)
 
-        try await Task.detached {
+        return try await Task.detached {
             let fm = FileManager.default
             guard let data = try? Data(contentsOf: zip, options: .mappedIfSafe), sha256Hex(data) == expected else {
                 try? fm.removeItem(at: zip)
                 throw Failure(reason: "The download doesn't match the release's checksum.")
             }
+            passed("sha256 matches \(expected.prefix(12))…")
             let unzipped = work.appendingPathComponent("unzipped")
             guard run("/usr/bin/ditto", ["-x", "-k", zip.path, unzipped.path]) == 0 else { throw Failure(reason: "The download couldn't be unzipped.") }
             let newApp = unzipped.appendingPathComponent("Paceline.app")
+            passed("Unzipped")
             let info = NSDictionary(contentsOf: newApp.appendingPathComponent("Contents/Info.plist"))
             guard let id = info?["CFBundleIdentifier"] as? String, id == bundleID, !bundleID.isEmpty else {
                 throw Failure(reason: "The download isn't Paceline.")
             }
+            passed("Bundle id is \(id)")
             guard let newVersion = info?["CFBundleShortVersionString"] as? String, isNewer(newVersion, than: version) else {
                 throw Failure(reason: "The download isn't newer than \(version).")
             }
+            passed("The app inside is \(newVersion), newer than \(version)")
             guard run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path]) == 0 else {
                 throw Failure(reason: "The downloaded app's code signature doesn't check out.")
             }
-            do {
-                _ = try fm.replaceItemAt(appURL, withItemAt: newApp)
-            } catch { throw Failure(reason: "Couldn't replace the app: \(error.localizedDescription)") }
+            passed("Code signature checks out")
+            return newApp
         }.value
+    }
+
+    // MARK: - --check-update
+
+    /// `--check-update [--from <version>]`: the version to check against, this copy's when
+    /// there's no --from; nil when --from has no value or it isn't a version.
+    static func checkVersion(arguments: [String], current: String) -> String? {
+        guard let i = arguments.firstIndex(of: "--from") else { return current }
+        guard i + 1 < arguments.count else { return nil }
+        let value = arguments[i + 1]
+        return value.range(of: #"^[vV]?[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.]+)?$"#, options: .regularExpression) != nil ? value : nil
+    }
+
+    /// What Check for Updates… and Install and Relaunch do, without installing: asks GitHub,
+    /// and if there's something newer, downloads and checks it in a temporary folder, then
+    /// deletes it. No UI, no settings. 0 when every step passed or there's nothing newer.
+    static func commandLineCheck(_ arguments: [String]) async -> Int32 {
+        guard let version = checkVersion(arguments: arguments, current: current) else {
+            print("FAIL  --from needs a version, like --from 0.1.1")
+            return 2
+        }
+        print("This version: \(current)" + (version == current ? "" : " (checking as \(version))"))
+        let kind = thisInstall()
+        print("Installed by Homebrew: " + (kind == .homebrew ? "yes. Update it with brew upgrade --cask paceline" : "no"))
+        if kind != .homebrew, let reason = notUpdatableReason(kind) { print("Can replace itself: no. \(reason)") }
+        guard let found = await fetchLatest() else {
+            print("FAIL  GitHub didn't answer")
+            return 1
+        }
+        print("Latest on GitHub: \(found.tag)")
+        guard isNewer(found.tag, than: version) else {
+            print("Newer: no. \(version) is the latest version")
+            return 0
+        }
+        print("Newer: yes")
+
+        let fm = FileManager.default
+        let work: URL
+        do {
+            work = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: Bundle.main.bundleURL, create: true)
+        } catch {
+            print("FAIL  Couldn't make a temporary folder")
+            return 1
+        }
+        var ok = true
+        do {
+            _ = try await fetchAndCheck(found, into: work, bundleID: Bundle.main.bundleIdentifier ?? "", version: version) { print("OK    \($0)") }
+        } catch {
+            ok = false
+            print("FAIL  " + ((error as? Failure)?.reason ?? error.localizedDescription))
+        }
+        try? fm.removeItem(at: work)
+        if fm.fileExists(atPath: work.path) {
+            ok = false
+            print("FAIL  Couldn't remove the temporary folder \(work.path)")
+        } else {
+            print("OK    Removed the temporary folder")
+        }
+        print(ok ? "All steps passed. Paceline \(found.version) would install." : "Paceline \(found.version) would not install.")
+        return ok ? 0 : 1
     }
 
     private static func run(_ path: String, _ arguments: [String]) -> Int32 {

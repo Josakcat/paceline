@@ -176,8 +176,14 @@ enum ChartColors {
         return AIOrder.sorted(builtIn, saved: order) { $0 }
     }
 
+    /// For an AI with no colour of its own: the default grey reads as
+    /// secondary text on the panel, so it gets a clear magenta instead
+    /// (3.7:1 on white, 4.6:1 on the dark panel, nothing like Claude's orange).
+    static let gray: UInt32 = 0x8E8E93, unbranded: UInt32 = 0xD04ED6
+
     static func color(forKey key: String, accounts: [ClaudeAccount], dark: Bool) -> UInt32 {
-        let base = Providers.named(UsageHistory.agent(forKey: key))?.color ?? 0x8E8E93
+        let own = Providers.named(UsageHistory.agent(forKey: key))?.color ?? gray
+        let base = own == gray ? unbranded : own
         return shade(base, step: step(forKey: key, accounts: accounts), dark: dark)
     }
 
@@ -202,6 +208,29 @@ enum ChartColors {
     }
 }
 
+/// The heights the bars are drawn at: every segment above 0 at least
+/// `minPoints` tall in a plot `plotHeight` points high, so a 1% AI next to
+/// a big Claude day still shows. The tallest day keeps its height (the
+/// scale's top): its bigger segments give up the room, each by the same
+/// share of what it has above the minimum, so their order stays. Only what's
+/// drawn changes; totals and VoiceOver read the real values.
+enum ChartHeights {
+    static func drawn(_ days: [[Double]], plotHeight: Double, minPoints: Double = 2.5) -> [[Double]] {
+        let top = days.map { $0.reduce(0) { $0 + max($1, 0) } }.max() ?? 0
+        guard top > 0, plotHeight > 0 else { return days }
+        let least = top * minPoints / plotHeight
+        return days.map { day in
+            let raised = day.map { $0 > 0 ? max($0, least) : 0 }
+            guard raised.reduce(0, +) > top else { return raised }
+            let count = Double(day.filter { $0 > 0 }.count)
+            let room = top - least * count
+            guard room > 0 else { return day.map { $0 > 0 ? top / count : 0 } }
+            let above = day.reduce(0) { $0 + max($1 - least, 0) }
+            return day.map { $0 <= 0 ? 0 : $0 < least ? least : least + ($0 - least) * room / above }
+        }
+    }
+}
+
 /// The last 7 days under today's total: a small bar per day, split by AI,
 /// in $ or tokens like the total. Only when there's more than today to show.
 private struct HistoryChart: View {
@@ -210,21 +239,30 @@ private struct HistoryChart: View {
     let accounts: [ClaudeAccount]
     var order: [String] = []
     @Environment(\.colorScheme) private var scheme
+    @State private var plotHeight: Double = 30
 
     private struct Bar: Identifiable {
         let day: Date
         let key: String     // "Claude:work" for an extra account
         let value: Double
+        var drawn: Double = 0   // its height in the chart, small ones raised
         var id: String { "\(day.timeIntervalSince1970)-\(key)" }
     }
 
     var body: some View {
         let days = history.last(7)
-        let bars = days.flatMap { day, records in
-            records.map { Bar(day: day, key: $0.key, value: showUSD ? $0.value.usd : Double($0.value.tokens)) }
-        }.filter { $0.value > 0 }   // plan lows alone aren't bars
         // Every key with tokens or $ gets its colour and a legend entry, stacked in the menu bar's order.
         let keys = UsageHistory.legendKeys(days, accounts: accounts, order: order)
+        let perDay = days.map { day, records in
+            records.map { Bar(day: day, key: $0.key, value: showUSD ? $0.value.usd : Double($0.value.tokens)) }
+                .filter { $0.value > 0 }   // plan lows alone aren't bars
+                .sorted { (keys.firstIndex(of: $0.key) ?? 0) < (keys.firstIndex(of: $1.key) ?? 0) }
+        }
+        let heights = ChartHeights.drawn(perDay.map { $0.map(\.value) }, plotHeight: plotHeight)
+        let bars = zip(perDay, heights).flatMap { day, drawn in
+            zip(day, drawn).map { bar, height in var bar = bar; bar.drawn = height; return bar }
+        }
+        let top = max(heights.map { $0.reduce(0, +) }.max() ?? 0, 1e-9)
         let note = UsageHistory.unpricedNote(days, accounts: accounts, order: order, showUSD: showUSD)
         let total = bars.reduce(0) { $0 + $1.value }
         let daysWithData = Set(bars.map(\.day)).count
@@ -237,16 +275,22 @@ private struct HistoryChart: View {
                          + (showUSD ? Format.usd(total / Double(daysWithData)) : Format.tokens(Int(total) / daysWithData)) + "/day")
                         .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                 }
-                Chart(bars.sorted { (keys.firstIndex(of: $0.key) ?? 0) < (keys.firstIndex(of: $1.key) ?? 0) }) { bar in
-                    BarMark(x: .value("Day", bar.day, unit: .day), y: .value(showUSD ? "$" : "Tokens", bar.value))
+                Chart(bars) { bar in
+                    BarMark(x: .value("Day", bar.day, unit: .day), y: .value(showUSD ? "$" : "Tokens", bar.drawn))
                         .foregroundStyle(by: .value("AI", bar.key))
                         .cornerRadius(2)
                         .accessibilityLabel(bar.day.formatted(.dateTime.weekday(.wide)) + ", " + ChartColors.name(forKey: bar.key, accounts: accounts))
                         .accessibilityValue(showUSD ? Format.usd(bar.value) : Format.tokens(Int(bar.value)) + " tokens")
                 }
                 .chartForegroundStyleScale(domain: keys, range: keys.map { Color(hex: ChartColors.color(forKey: $0, accounts: accounts, dark: scheme == .dark)) })
+                .chartYScale(domain: 0...top)   // the tallest day fills the plot, so the minimum is in real points
                 .chartLegend(.hidden)
                 .chartYAxis(.hidden)
+                .chartOverlay { proxy in
+                    Color.clear
+                        .onAppear { plotHeight = proxy.plotSize.height }
+                        .onChange(of: proxy.plotSize.height) { _, height in plotHeight = height }
+                }
                 .chartXAxis {
                     AxisMarks(values: .stride(by: .day)) { _ in
                         AxisValueLabel(format: .dateTime.weekday(.narrow)).font(.system(size: 9))
@@ -254,7 +298,7 @@ private struct HistoryChart: View {
                 }
                 .frame(height: 46)
                 .accessibilityLabel("Last 7 days: \(showUSD ? Format.usd(total) : Format.tokens(Int(total)) + " tokens") in all")
-                legend(keys)
+                legend(keys, totals: UsageHistory.totals(days, showUSD: showUSD))
                 if let note {
                     Text(note).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         .help(note)
@@ -266,8 +310,9 @@ private struct HistoryChart: View {
 }
 
 extension HistoryChart {
-    /// Logo, colour and name per key, wrapping onto a second line if they don't fit.
-    func legend(_ keys: [String]) -> some View {
+    /// Logo, colour, name and 7-day total per key, wrapping onto the next
+    /// line if they don't fit (a name is never cut).
+    func legend(_ keys: [String], totals: [String: String]) -> some View {
         FlowLayout(spacing: 8, lineSpacing: 2) {
             ForEach(keys, id: \.self) { key in
                 let name = ChartColors.name(forKey: key, accounts: accounts)
@@ -276,7 +321,11 @@ extension HistoryChart {
                     Circle().fill(Color(hex: ChartColors.color(forKey: key, accounts: accounts, dark: scheme == .dark)))
                         .frame(width: 6, height: 6)
                     Image(nsImage: AILogos.listIcon(for: listed ? name : "Claude", size: 11))
-                    Text(name).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(name).font(.system(size: 9.5)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                    if let total = totals[key] {
+                        Text(total).font(.system(size: 9.5, design: .monospaced)).foregroundStyle(.primary.opacity(0.75))
+                            .lineLimit(1).fixedSize()
+                    }
                 }
                 .accessibilityElement(children: .combine)
             }

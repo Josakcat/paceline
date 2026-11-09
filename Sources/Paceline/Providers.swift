@@ -72,7 +72,7 @@ enum Providers {
                  install: .init(command: "curl -fsSL https://claude.ai/install.sh | bash", page: URL(string: "https://claude.com/download")!,
                                 pageTitle: "Claude app")),
         Provider(name: "Codex", short: "CX", group: .planLimits, capabilities: [.planPercent, .tokens, .cost, .signIn],
-                 bundleID: "com.openai.codex", color: 0x8E8E93,
+                 bundleID: "com.openai.codex", color: 0x0A98AE,
                  fixes: ["Not signed in": .init(detail: "Sign in opens Terminal and runs codex login.", action: .signIn(.init("codex login"))),
                          "Installed": .init(title: "Codex: sign in to see its usage", detail: "Open the Codex app and sign in on its first screen.",
                                             action: .openApp(bundleID: "com.openai.codex"))],

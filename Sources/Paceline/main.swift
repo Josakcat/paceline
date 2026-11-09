@@ -34,6 +34,11 @@ if arguments.contains("--sources") {
     UsageSources.printToday()
     exit(0)
 }
+// The update path without installing anything; see Updates.commandLineCheck.
+if arguments.contains("--check-update") {
+    Task.detached { exit(await Updates.commandLineCheck(arguments)) }
+    dispatchMain()
+}
 if let i = arguments.firstIndex(of: "--render-icon"), i + 1 < arguments.count {
     exit(SelfTest.renderIcon(to: arguments[i + 1]) ? 0 : 1)
 }

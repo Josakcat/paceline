@@ -109,6 +109,25 @@ struct UsageHistory: Codable, Equatable, Sendable {
         return ChartColors.stackOrder(used, accounts: accounts, order: order)
     }
 
+    /// Each key's total for these days, as the legend shows it after its
+    /// name: "5.70M" in tokens, "$1.20" in $, "$?" when its $0 is only for
+    /// want of a price (the note under the legend says how many tokens).
+    static func totals(_ days: [(day: Date, records: [String: DayRecord])], showUSD: Bool) -> [String: String] {
+        var tokens: [String: Int] = [:], usd: [String: Double] = [:], unpriced: [String: Int] = [:]
+        for (_, records) in days {
+            for (key, record) in records {
+                tokens[key, default: 0] += record.tokens
+                usd[key, default: 0] += record.usd
+                unpriced[key, default: 0] += record.unpricedTokens ?? 0
+            }
+        }
+        return tokens.reduce(into: [:]) { out, entry in
+            let (key, count) = entry, dollars = usd[key] ?? 0
+            guard count > 0 || dollars > 0 else { return }   // plan lows only: not in the legend
+            out[key] = !showUSD ? Format.tokens(count) : dollars <= 0 && (unpriced[key] ?? 0) > 0 ? "$?" : Format.usd(dollars)
+        }
+    }
+
     /// In $ only: the AIs whose days add up to $0 only because their models
     /// have no known price, e.g. "Codex: 1.96M tokens · no price yet".
     /// Free use (no unpriced tokens recorded) isn't listed.
