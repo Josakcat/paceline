@@ -77,7 +77,7 @@ open ~/Applications/Paceline.app
 
 **Or download a release.** Releases aren't notarized yet. The first time you open it, macOS says it can't verify the app: choose **Done**, not **Move to Trash**. Then go to **System Settings → Privacy & Security** and choose **Open Anyway**.
 
-**Homebrew** (coming soon): `brew install --cask josakcat/tap/paceline`.
+**Homebrew:** `brew install --cask josakcat/tap/paceline`. Update with `brew upgrade --cask paceline`.
 
 **Updates.** Use **Check for Updates…** in the right-click menu or in Settings → General. It asks GitHub for the latest release and opens its page. Paceline never checks by itself.
 
