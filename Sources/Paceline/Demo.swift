@@ -4,7 +4,9 @@ import Foundation
 /// Nothing on this Mac is read for them, and settings go to their own domain
 /// (com.josakcat.paceline.demo), so the real ones are never touched.
 enum Demo {
-    static let isOn = ["1", "new"].contains(ProcessInfo.processInfo.environment["PACELINE_DEMO"])
+    static let isOn = ["1", "new", "switch"].contains(ProcessInfo.processInfo.environment["PACELINE_DEMO"])
+    /// `PACELINE_DEMO=switch`: Claude's 5-hour limit low, so the panel suggests Work.
+    static let isSwitch = ProcessInfo.processInfo.environment["PACELINE_DEMO"] == "switch"
     /// `PACELINE_DEMO=new`: a first launch instead. Nothing signed in, no plans or
     /// usage, and the account list kept (in the demo domain) so the Add Claude
     /// account guide can be tried end to end on made-up folders.
@@ -56,8 +58,8 @@ enum Demo {
             PlanWindow(label: label, left: left, resets: now.addingTimeInterval(resetsIn))
         }
         return [
-            PlanUsage(agent: "Claude", windows: [window("5h", 62, resetsIn: 110 * 60), window("Week", 71, resetsIn: 76 * 3600)], at: at),
-            PlanUsage(agent: "Work", windows: [window("5h", 34, resetsIn: 160 * 60), window("Week", 58, resetsIn: 48 * 3600)], at: at),
+            PlanUsage(agent: "Claude", windows: [window("5h", isSwitch ? 12 : 62, resetsIn: 110 * 60), window("Week", 71, resetsIn: 76 * 3600)], at: at),
+            PlanUsage(agent: "Work", windows: [window("5h", isSwitch ? 82 : 34, resetsIn: 160 * 60), window("Week", isSwitch ? 88 : 58, resetsIn: 48 * 3600)], at: at),
             PlanUsage(agent: "Antigravity", group: "Gemini", windows: [window("5h", 92, resetsIn: 200 * 60), window("Week", 88, resetsIn: 100 * 3600)], at: at),
             PlanUsage(agent: "Antigravity", group: "Claude and GPT", windows: [window("5h", 71, resetsIn: 200 * 60), window("Week", 74, resetsIn: 100 * 3600)], at: at),
             PlanUsage(agent: "Codex", windows: [window("5h", 81, resetsIn: 180 * 60), window("Week", 76, resetsIn: 120 * 3600)], at: at),

@@ -62,7 +62,10 @@ struct TokensView: View {
             let missing = missingPlans
             // Only with something under it: a first launch had a bare "PLAN LEFT".
             if !model.plans.isEmpty || setup || !missing.isEmpty {
-                if !model.plans.isEmpty { PlanSection(plans: model.orderedPlans) }
+                if !model.plans.isEmpty {
+                    PlanSection(plans: model.orderedPlans)
+                    SwitchAccountLine(plans: model.plans, accounts: model.claudeAccounts, controller: controller)
+                }
                 if setup { ClaudePlanSetup(model: model, controller: controller) }
                 ForEach(missing, id: \.agent) { missing in
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -412,6 +415,43 @@ struct PlanSection: View {
         let paces = plans.flatMap { plan in plan.windows.compactMap { plan.pace($0, now: now) } }
         let out = plans.contains { $0.windows.contains { $0.left == 0 } }
         return !out && paces.contains(.onPace) && !paces.contains { $0 != .onPace }
+    }
+}
+
+/// With several Claude accounts, one low and another with clearly more:
+/// "Work has 80% left — switch to it for now", a Copy for the command that
+/// opens Claude Code with it, and × to hide it until that window's next round.
+private struct SwitchAccountLine: View {
+    let plans: [PlanUsage]
+    let accounts: [ClaudeAccount]
+    let controller: AppController
+    @AppStorage("dismissedSwitch", store: Demo.defaults) private var dismissed = ""
+    @State private var copied = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            if let hint = AccountSwitch.hint(plans, accounts: accounts, now: context.date), hint.id != dismissed {
+                HStack(alignment: .center, spacing: 6) {
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 10)).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(hint.text).font(.system(size: 11, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+                        Text(hint.why).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 4)
+                    Button(copied ? "Copied" : "Copy") {
+                        controller.copyString(hint.command)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                    }
+                    .controlSize(.small).help(hint.command)
+                    Button { dismissed = hint.id } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).help("Hide until this limit resets").accessibilityLabel("Hide")
+                }
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.top, 2)
+            }
+        }
     }
 }
 

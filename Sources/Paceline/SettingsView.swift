@@ -145,6 +145,7 @@ struct SettingsView: View {
                     HStack(spacing: 8) {
                         Text(Updates.current)
                         Button("Check for Updates…") { Updates.check() }
+                        Button("Report a Problem…") { controller.showReport() }
                     }
                 } label: {
                     Text("Version")
@@ -446,6 +447,11 @@ struct SettingsView: View {
             if account.agent == "Claude" && group != .notInstalled {
                 Divider()
                 claudePlanUsage
+                Toggle(isOn: Bindable(model).statusLinePace) {
+                    Text("Show pace in Claude Code’s status line")
+                    Text("Adds “5h runs out in 1h 12m” when a limit is running out. Only with Paceline’s status line.")
+                }
+                .controlSize(.small).font(.caption)
             }
             if let extra {
                 Divider()

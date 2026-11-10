@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in Paceline is wrong or missing.
+labels: [bug]
+body:
+  - type: dropdown
+    id: ai
+    attributes:
+      label: Which AI?
+      multiple: true
+      options:
+        - Claude
+        - Codex
+        - Antigravity
+        - Windsurf / Devin Desktop
+        - OpenCode
+        - Cline
+        - Roo Code
+        - Kilo Code
+        - Gemini CLI
+        - Amp
+        - Cursor
+        - GitHub Copilot
+        - Kiro
+        - Paceline itself (menu bar, panel, Settings)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did and what Paceline showed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Right-click the menu bar icon → Report a Problem… → Copy, then paste here. It has no email, account name, project, path or token. Please don't paste screenshots with your email in them.
+      render: text
+    validations:
+      required: false

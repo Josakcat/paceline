@@ -28,6 +28,9 @@ enum SelfTest {
         failures += followupTests()
         failures += chartLegendTests()
         failures += updateTests()
+        failures += accountSwitchTests()
+        failures += statusLineTests()
+        failures += reportTests()
         print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
         return failures == 0
     }
@@ -121,7 +124,7 @@ enum SelfTest {
         let items = controller.statusMenu().items
         let titles = items.map { $0.isSeparatorItem ? "—" : $0.title }
         let sub = items.first { $0.title == "Menu Bar" }?.submenu?.items.map { $0.isSeparatorItem ? "—" : $0.title } ?? []
-        let menuOK = titles == ["Claude: 5h 54% · Week 37% left", "—", "Menu Bar", "Show Tokens Instead of $", "—", "Check for Updates…", "Settings…", "Quit Paceline"]
+        let menuOK = titles == ["Claude: 5h 54% · Week 37% left", "—", "Menu Bar", "Show Tokens Instead of $", "—", "Check for Updates…", "Report a Problem…", "Settings…", "Quit Paceline"]
             && items.first?.isEnabled == false && sub == ["All AIs", "Latest used AI", "—", "Compact", "Two rows"]
         check((menuOK ? "ok" : titles.joined(separator: " | "), false), "ok", "right-click menu starts with the readings")
         return failures
@@ -364,6 +367,55 @@ enum SelfTest {
         let reading = AIReading(name: "Claude", text: "40%", low: false, lastActive: nil, rows: rows)
         check(AIReading.tooltip([reading]) == "Claude: 5h 40% left, runs out in 1h 20m", "tooltip → \(AIReading.tooltip([reading]))")
         check(AIReading.spoken([reading]) == "Claude 5-hour 40% left, runs out in 1h 20m", "VoiceOver → \(AIReading.spoken([reading]))")
+
+        // Lately counts for half. All these are 5h windows; `ago` is from now.
+        func sample(_ ago: TimeInterval, _ used: Int) -> PaceSample { PaceSample(at: now.addingTimeInterval(-ago), used: used) }
+        func near(_ pace: PlanWindow.Pace?, _ seconds: TimeInterval) -> Bool {
+            if case .runsOut(let t)? = pace { return abs(t - seconds) < 1 } else { return false }
+        }
+        // 70% in the first hour of three, then nothing: the average says it runs out, lately says stopped.
+        let stopped = window(left: 30, resetsIn: 2 * 3600)
+        check(stopped.pace(now: now) != .onPace && stopped.pace(now: now, samples: [sample(2.5 * 3600, 35), sample(2 * 3600, 70)]) == .onPace,
+              "heavy early, then stopped 2h ago: on pace, not runs out")
+        // 10% in two hours, then 45% in the last hour: the average says on pace, lately says it runs out.
+        let rushed = window(left: 45, resetsIn: 2 * 3600)
+        let rushedPace = rushed.pace(now: now, samples: [sample(2 * 3600, 8), sample(3600, 10), sample(600, 50)])
+        let average: TimeInterval = 55.0 / 10800, lately: TimeInterval = 45.0 / 3600
+        check(rushed.pace(now: now) == .onPace && near(rushedPace, 45 / ((average + lately) / 2)),
+              "light, then 45% in the last hour: runs out in \(String(describing: rushedPace))")
+        // Steady 30%/h: the same as the average alone.
+        check(near(window(left: 40, resetsIn: 3 * 3600).pace(now: now, samples: [sample(5400, 15), sample(3600, 30), sample(1800, 45)]), 4800),
+              "steady use: the same 1h 20m as before")
+        // Little to go on: readings only within the last hour, or none older than the round.
+        check(near(window(left: 40, resetsIn: 3 * 3600).pace(now: now, samples: [sample(1800, 50)]), 4800)
+              && near(window(left: 40, resetsIn: 3 * 3600).pace(now: now, samples: [sample(3 * 3600, 90)]), 4800),
+              "only recent readings, or last round's: the average, as before")
+        check(window(left: 40, resetsIn: 4 * 3600).pace(now: now, samples: [sample(2400, 10), sample(600, 60)]) == nil,
+              "under a quarter in: still no call, whatever the readings")
+
+        // The log: one reading per 1% of the window, 40 at most, a new round starts over.
+        let resets = now.addingTimeInterval(3600)
+        var log = PaceLog()
+        for minute in 0..<240 {
+            let at: Date = now.addingTimeInterval(Double(minute - 240) * 60)
+            let left: Int = 100 - minute / 4
+            log = log.recording([PlanUsage(agent: "Claude", windows: [PlanWindow(label: "5h", left: left, resets: resets)], at: at)])
+        }
+        let latest = PlanUsage(agent: "Claude", windows: [PlanWindow(label: "5h", left: 41, resets: resets.addingTimeInterval(30))], at: now)
+        let logged = log.recording([latest]).attached(to: [latest])[0].paceSamples["5h"] ?? []
+        let gaps: [TimeInterval] = zip(logged, logged.dropFirst()).map { pair in pair.1.at.timeIntervalSince(pair.0.at) }
+        let spaced: Bool = gaps.dropLast().allSatisfy { gap in gap >= 180 }
+        let newest: Bool = logged.last == PaceSample(at: now, used: 59)
+        check(logged.count <= PaceLog.kept && logged.count > 20 && newest && spaced,
+              "the log keeps \(logged.count) readings ≥ 3 minutes apart, the newest last")
+        let next = PlanUsage(agent: "Claude", windows: [PlanWindow(label: "5h", left: 95, resets: resets.addingTimeInterval(5 * 3600))], at: now.addingTimeInterval(4000))
+        check(log.recording([next]).attached(to: [next])[0].paceSamples["5h"]?.count == 1
+              && log.attached(to: [PlanUsage(agent: "Codex", windows: latest.windows, at: now)])[0].paceSamples.isEmpty,
+              "a new round starts over; another AI has its own log")
+        let idle = PlanUsage(agent: "Claude", windows: [PlanWindow(label: "5h", left: 30, resets: now.addingTimeInterval(2 * 3600))], at: now.addingTimeInterval(-2 * 3600))
+        let idleLogged = PaceLog().recording([idle]).attached(to: [idle])[0]
+        check(idle.pace(idle.windows[0], now: now) != .onPace && idleLogged.pace(idleLogged.windows[0], now: now) == .onPace,
+              "a reading 2 hours old, opened now: nothing used since, on pace")
         return failures
     }
 

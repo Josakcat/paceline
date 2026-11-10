@@ -9,6 +9,9 @@ final class AppController {
     private lazy var settingsWindow = AppWindow(title: "Paceline Settings", size: NSSize(width: 500, height: 520)) { [unowned self] in
         SettingsView(model: self.model, controller: self)
     }
+    private lazy var reportWindow = AppWindow(title: "Report a Problem", size: NSSize(width: 520, height: 460)) { [unowned self] in
+        ReportView(model: self.model)
+    }
 
     private var panel: FloatingPanel!
     private var tokenMonitor: TokenMonitor?
@@ -167,6 +170,7 @@ final class AppController {
         menu.addItem(ClosureMenuItem("Show Tokens Instead of $", checked: !model.showUSD) { [weak self] in self?.toggleUnits() })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Check for Updates…") { Updates.check() })
+        menu.addItem(ClosureMenuItem("Report a Problem…") { [weak self] in self?.showReport() })
         menu.addItem(ClosureMenuItem("Settings…", key: ",") { [weak self] in self?.showSettings() })
         menu.addItem(ClosureMenuItem("Quit Paceline", key: "q") { NSApp.terminate(nil) })
         return menu
@@ -225,6 +229,12 @@ final class AppController {
         if let tab { model.settingsTab = tab }
         closePanel()
         settingsWindow.show()
+    }
+
+    /// Report a Problem…: its own window, read anew each time it opens.
+    func showReport() {
+        closePanel()
+        reportWindow.show()
     }
 
     /// Each Settings tab's form height, last reported: switching back to a tab
@@ -286,6 +296,8 @@ final class AppController {
     private var debugOnly: Set<String>?
 
     private var readingPlans = false
+    /// The readings seen this round, for the pace (in memory only).
+    private var paceLog = PaceLog()
     private var plansAgain = false
 
     /// Read off the main thread: Codex's are the tail of its newest logs and
@@ -296,8 +308,10 @@ final class AppController {
         readingPlans = true
         let ignore = ignorePlanFiles, accounts = model.claudeAccounts
         Task {
-            let plans = ignore ? [] : await Task.detached(priority: .utility) { PlanUsageReader.all(accounts: accounts) }.value
+            let read = ignore ? [] : await Task.detached(priority: .utility) { PlanUsageReader.all(accounts: accounts) }.value
             readingPlans = false
+            paceLog = paceLog.recording(read)
+            let plans = paceLog.attached(to: read)
             if plans != model.plans { model.plans = plans }
             updateStatusItem()
             notifyIfDue()
@@ -357,7 +371,7 @@ final class AppController {
     private func notifyIfDue() {
         guard model.notify else { return }
         let said = Set(Demo.defaults.stringArray(forKey: "sentAlerts") ?? [])
-        let (alerts, sent) = PlanAlerts.due(model.plans, sent: said)
+        let (alerts, sent) = PlanAlerts.due(model.plans, sent: said, accounts: model.claudeAccounts)
         if sent != said { Demo.defaults.set(sent.sorted(), forKey: "sentAlerts") }
         alerts.forEach(Notifier.post)
     }
@@ -541,6 +555,7 @@ final class AppController {
         case "close": closePanel(); model.addAccountStep = nil; model.installGuide = nil; model.accountDetails = nil; settingsWindow.close()
         case "settings":
             showSettings(SettingsTab(rawValue: value ?? ""))
+        case "report": value == "close" ? reportWindow.close() : showReport()
         case "shows": if let shows = MenuBarShows(rawValue: value ?? "") { setMenuBarShows(shows) }
         case "only":
             debugOnly = value == "all" ? nil : Set((value ?? "").split(separator: ",").map(String.init))
@@ -621,7 +636,7 @@ final class AppController {
             // Renders our own windows (no Screen Recording permission needed); the glass renders flat.
             let dir = URL(fileURLWithPath: value ?? NSTemporaryDirectory())
             for (name, view) in [("panel", panelOpen ? panel.contentView : nil), ("settings", settingsWindow.contentView),
-                                 ("sheet", settingsWindow.sheetView), ("menubar", statusItem.buttonView),
+                                 ("sheet", settingsWindow.sheetView), ("report", reportWindow.contentView), ("menubar", statusItem.buttonView),
                                  ("popover", NSApp.windows.first { $0.isVisible && String(describing: type(of: $0)).contains("Popover") }?.contentView)] {
                 guard let view, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
                 view.cacheDisplay(in: view.bounds, to: rep)

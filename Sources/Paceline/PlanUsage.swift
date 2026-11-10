@@ -35,17 +35,31 @@ extension PlanWindow {
     /// "5-hour", "daily", "weekly", for notifications and VoiceOver.
     static func spokenName(_ label: String) -> String { label == "5h" ? "5-hour" : label == "Day" ? "daily" : "weekly" }
 
-    /// The average rate since the window began, carried forward: it runs out
-    /// if that empties it at least max(15 min, 5% of the window) before the
-    /// reset; closer than that is on pace. nil when there's too little to go
-    /// on: no reset time, under a quarter of the way in, nothing used, or
-    /// nothing left (it has run out; 0% says so, "runs out in 1m" wouldn't).
+    /// The last fifth of a window (the last hour of five) is what "lately" means.
+    static let recentShare = 0.2
+
+    /// The rate it's being used at, carried forward: half the average since the
+    /// window began, half the rate lately (`samples`, the readings seen this
+    /// round; with none, lately is the average, as before). It runs out if
+    /// that empties it at least max(15 min, 5% of the window) before the
+    /// reset; closer than that is on pace, and so is nothing used lately (it
+    /// was used, then stopped). nil when there's too little to go on: no reset
+    /// time, under a quarter of the way in, nothing used, or nothing left (it
+    /// has run out; 0% says so, "runs out in 1m" wouldn't).
     /// (Old data is the caller's call: `PlanUsage.isStale`.)
-    func pace(now: Date = Date()) -> Pace? {
+    func pace(now: Date = Date(), samples: [PaceSample] = []) -> Pace? {
         guard let resets, let length, resets > now else { return nil }
         let elapsed = length - resets.timeIntervalSince(now), used = Double(100 - left)
         guard elapsed >= length * 0.25, used > 0, left > 0 else { return nil }
-        let runsOut = (100 - used) / (used / elapsed)
+        // Lately: since the newest reading at least a fifth of the window old.
+        // The window's start (0% used) always is one, being a quarter in.
+        let start = PaceSample(at: resets.addingTimeInterval(-length), used: 0)
+        let cutoff = now.addingTimeInterval(-length * Self.recentShare)
+        let base = samples.filter { $0.at > start.at && $0.at <= cutoff && $0.used <= 100 - left }
+            .max { $0.at < $1.at } ?? start
+        let recent = (used - Double(base.used)) / now.timeIntervalSince(base.at)
+        guard recent > 0 else { return .onPace }
+        let runsOut = (100 - used) / ((used / elapsed + recent) / 2)
         return resets.timeIntervalSince(now) - runsOut >= max(15 * 60, length * 0.05) ? .runsOut(in: runsOut) : .onPace
     }
 
@@ -55,6 +69,61 @@ extension PlanWindow {
         if s < 3600 { return "\(max(1, s / 60))m" }
         if s < 86400 { return "\(s / 3600)h \(s % 3600 / 60)m" }
         return "\(s / 86400)d \(s % 86400 / 3600)h"
+    }
+}
+
+/// One reading of a window: how much was used, and when it was saved.
+struct PaceSample: Equatable, Sendable {
+    let at: Date
+    let used: Int
+}
+
+/// The readings seen this round of each plan's windows, kept in memory only:
+/// one every 1% of the window at most (3 minutes of five hours), 40 at most.
+/// A new round (another reset time) starts over.
+struct PaceLog: Sendable {
+    static let kept = 40
+    private var rounds: [String: (resets: Date, samples: [PaceSample])] = [:]
+
+    private static func key(_ plan: PlanUsage, _ window: PlanWindow) -> String { "\(plan.id)|\(window.label)" }
+
+    /// These plans' readings added.
+    func recording(_ plans: [PlanUsage]) -> PaceLog {
+        var out = self
+        for plan in plans {
+            for window in plan.windows where !window.wasReset {
+                guard let resets = window.resets, let length = window.length else { continue }
+                let key = Self.key(plan, window), sample = PaceSample(at: plan.at, used: 100 - window.left)
+                // The same round, give or take a few minutes of rounding.
+                var samples = out.rounds[key].flatMap { abs($0.resets.timeIntervalSince(resets)) < 600 ? $0.samples : nil } ?? []
+                if let last = samples.last {
+                    guard sample.at > last.at else { continue }
+                    // The newest stands in for its 1% until a new one is due.
+                    if samples.count >= 2, last.at.timeIntervalSince(samples[samples.count - 2].at) < length * 0.01 {
+                        samples[samples.count - 1] = sample
+                    } else {
+                        samples.append(sample)
+                    }
+                } else {
+                    samples = [sample]
+                }
+                out.rounds[key] = (resets, Array(samples.suffix(Self.kept)))
+            }
+        }
+        return out
+    }
+
+    /// These plans with their windows' readings, for `PlanUsage.pace`.
+    func attached(to plans: [PlanUsage]) -> [PlanUsage] {
+        plans.map { plan in
+            var plan = plan
+            for window in plan.windows {
+                guard let resets = window.resets, let round = rounds[Self.key(plan, window)],
+                      abs(round.resets.timeIntervalSince(resets)) < 600 else { continue }
+                plan.paceSamples[window.label] = round.samples
+            }
+            return plan
+        }
     }
 }
 
@@ -69,6 +138,8 @@ struct PlanUsage: Equatable, Identifiable, Sendable {
     var fetched = false
     /// The plan's name where the log gives it (Codex: "Team").
     var planName: String?
+    /// Earlier readings this round, per window label, for the pace (`PaceLog`).
+    var paceSamples: [String: [PaceSample]] = [:]
 
     var id: String { group.map { "\(agent) \($0)" } ?? agent }
     var title: String { group.map { "\(agent) · \($0)" } ?? agent }
@@ -82,7 +153,7 @@ struct PlanUsage: Equatable, Identifiable, Sendable {
 
     /// A window's pace, unless this plan's data is old.
     func pace(_ window: PlanWindow, now: Date = Date()) -> PlanWindow.Pace? {
-        isStale(now: now) ? nil : window.pace(now: now)
+        isStale(now: now) ? nil : window.pace(now: now, samples: paceSamples[window.label] ?? [])
     }
 
     /// "as of 12 min ago" once it's 15 minutes old.
@@ -288,20 +359,38 @@ enum PlanUsageReader {
 
     /// `Paceline --statusline`, set as Claude Code's `statusLine` command:
     /// reads the session JSON on stdin, saves only the plan percentages and
-    /// reset times, and prints "Opus 5.5 · ctx 40% · 5h 32% · week 91% left".
-    static func statusLine() {
+    /// reset times, and prints "Opus 5.5 · ctx 40% · 5h 32% · Week 91% left".
+    /// With the pace on (Settings → Accounts → Claude, or `--pace` / `--show`), a window
+    /// that's running out adds "· 5h runs out in 1h 12m". Empty or broken
+    /// input prints "Claude" and saves nothing.
+    static func statusLine(arguments: [String] = CommandLine.arguments) {
         let input = FileHandle.standardInput.readDataToEndOfFile()
         let json = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] ?? [:]
+        // Run under an extra account's folder, the numbers are that account's; an unlisted folder's aren't saved.
+        if let file = statusLineFile(configDir: ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], accounts: ClaudeAccounts.load()) {
+            save(statusLineWindows(json), to: file)
+        }
+        let pace = arguments.contains("--pace") || arguments.contains("--show") || UserDefaults.standard.bool(forKey: statusLinePaceKey)
+        print(statusLineText(json, pace: pace))
+    }
+
+    /// Off by default: the status line stays as it was.
+    static let statusLinePaceKey = "statusLinePace"
+
+    /// The session JSON's `rate_limits`, as saved: `["five_hour": ["used": 38, "resets_at": …], …]`.
+    static func statusLineWindows(_ json: [String: Any]) -> [String: Any] {
         let limits = json["rate_limits"] as? [String: Any] ?? [:]
         var keep: [String: Any] = [:]
         for key in ["five_hour", "seven_day"] {
             guard let w = limits[key] as? [String: Any], let used = w["used_percentage"] as? NSNumber else { continue }
             keep[key] = ["used": used, "resets_at": w["resets_at"] ?? NSNull()]
         }
-        // Run under an extra account's folder, the numbers are that account's; an unlisted folder's aren't saved.
-        if let file = statusLineFile(configDir: ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], accounts: ClaudeAccounts.load()) {
-            save(keep, to: file)
-        }
+        return keep
+    }
+
+    /// The status line's text for this session JSON.
+    static func statusLineText(_ json: [String: Any], pace: Bool, now: Date = Date()) -> String {
+        let keep = statusLineWindows(json)
         var bits = [((json["model"] as? [String: Any])?["display_name"] as? String) ?? "Claude"]
         if let context = ((json["context_window"] as? [String: Any])?["used_percentage"] as? NSNumber)?.doubleValue {
             bits.append("ctx \(Int(percent: context))%")
@@ -310,7 +399,21 @@ enum PlanUsageReader {
             ((keep[key] as? [String: Any])?["used"] as? NSNumber).map { "\(label) \(Int(percent: 100 - $0.doubleValue))%" }
         }
         if !left.isEmpty { bits.append(left.joined(separator: " · ") + " left") }
-        print(bits.joined(separator: " · "))
+        if pace, let warning = paceWarning(keep, now: now) { bits.append(warning) }
+        return bits.joined(separator: " · ")
+    }
+
+    /// "5h runs out in 1h 12m": the window that runs out soonest at the rate since
+    /// it began (one reading, so no "lately"); nil when none is running out.
+    static func paceWarning(_ windows: [String: Any], now: Date = Date()) -> String? {
+        var saved = windows
+        saved["saved_at"] = now.timeIntervalSince1970
+        guard let plan = claude(saved, agent: "Claude", now: now) else { return nil }
+        let soonest = plan.windows.compactMap { window -> (label: String, in: TimeInterval)? in
+            guard case .runsOut(let seconds) = plan.pace(window, now: now) else { return nil }
+            return (window.label, seconds)
+        }.min { $0.in < $1.in }
+        return soonest.map { "\($0.label) runs out in \(PlanWindow.duration($0.in))" }
     }
 
     /// Writes `{"saved_at": …, "five_hour": {"used": …, "resets_at": …}, …}`; nothing when empty.

@@ -108,6 +108,8 @@ final class AppModel {
     var hideFromScreenSharing: Bool { didSet { defaults.set(hideFromScreenSharing, forKey: "hideFromSharing") } }
     var notify: Bool { didSet { defaults.set(notify, forKey: "notify") } }
     var fetchFresh: Bool { didSet { defaults.set(fetchFresh, forKey: "fetchFresh") } }   // FreshLimits, off by default
+    /// `--statusline` adds "5h runs out in …"; off by default.
+    var statusLinePace: Bool { didSet { defaults.set(statusLinePace, forKey: PlanUsageReader.statusLinePaceKey) } }
     var appearance: GlassAppearance {
         didSet { if let data = try? JSONEncoder().encode(appearance) { defaults.set(data, forKey: "appearance") } }
     }
@@ -148,6 +150,7 @@ final class AppModel {
         defaults.register(defaults: [
             "showUSD": true, "menuBarShows": MenuBarShows.all.rawValue, "menuBarStyle": MenuBarStyle.compact.rawValue,
             "hideFromSharing": true, "notify": false, "fetchFresh": false, "debugEndpoints": false,
+            PlanUsageReader.statusLinePaceKey: false,
         ])
         showUSD = defaults.bool(forKey: "showUSD")
         menuBarShows = MenuBarShows(rawValue: defaults.string(forKey: "menuBarShows") ?? "") ?? .all
@@ -155,6 +158,7 @@ final class AppModel {
         hideFromScreenSharing = defaults.bool(forKey: "hideFromSharing")
         notify = defaults.bool(forKey: "notify")
         fetchFresh = defaults.bool(forKey: "fetchFresh")
+        statusLinePace = defaults.bool(forKey: PlanUsageReader.statusLinePaceKey)
         appearance = defaults.data(forKey: "appearance").flatMap { try? JSONDecoder().decode(GlassAppearance.self, from: $0) } ?? .standard
         debugEndpoints = defaults.bool(forKey: "debugEndpoints")
         aiOrder = keepsOrder ? defaults.stringArray(forKey: AIOrder.defaultsKey) ?? [] : []

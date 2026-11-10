@@ -3,7 +3,7 @@
 A macOS menu bar app that shows how much of your AI plans you have left, and whether you'll run out before they reset.
 
 - **All your AI plans in one menu bar item.** 13 AI tools. Several Claude Code accounts (personal, work, …), Codex and Antigravity, each with its logo and the percentage left. Windsurf's daily and weekly limits, tokens and $ from OpenCode, Cline, Roo Code, Kilo Code, Gemini CLI and Amp, and who's signed in to Cursor, Copilot and Kiro.
-- **Pace, not just percent.** At the rate you've used a 5-hour or weekly limit so far, Paceline tells you if it runs out before it resets, and when: "Runs out in 1h 12m".
+- **Pace, not just percent.** At the rate you've been using a 5-hour or weekly limit, with recent use counting for half, Paceline tells you if it runs out before it resets, and when: "Runs out in 1h 12m".
 - **Local only.** It reads files these tools already keep on your Mac. No browser cookies, no API keys, no tokens. The only network request of its own is the update check: **Check for Updates…** when you click it, or once a day if you turn on **Install updates automatically**.
 
 <p align="center">
@@ -34,7 +34,7 @@ A macOS menu bar app that shows how much of your AI plans you have left, and whe
 - **Sign-in only:** Cursor, Copilot and Kiro keep usage on their servers, and fetching it would mean using your session. Paceline shows who's signed in and a **View Usage** button for their own page.
 - The panel lists only AIs used today, and the menu bar only those with a number. Settings → Accounts puts them in three groups, by what you need to do: **Ready**, **Needs sign-in** and **Not installed** (folded until you open it). Each row is one line; its ⓘ has the rest.
 - AIs without an app to take a logo from get a grey letter badge (OC, CL, GE…).
-- **Not yet tried with the real thing:** OpenCode, Cline, Roo Code, Kilo Code, Gemini CLI, Amp, Copilot, Windsurf and Kiro were written from their source code or docs (versions are in the code comments) and tested with made-up files only. If one looks wrong on your Mac, please open an issue.
+- **Not yet tried with the real thing:** OpenCode, Cline, Roo Code, Kilo Code, Gemini CLI, Amp, Copilot, Windsurf and Kiro were written from their source code or docs (versions are in the code comments) and tested with made-up files only. If one looks wrong on your Mac, please open an issue with **Report a Problem…**.
 
 **Menu bar.** Each AI's logo and its 5-hour limit left (or weekly, if that's all there is; AIs without a plan show today's tokens or $). Extra Claude accounts get a small 2, 3, … on the logo. **Settings → General → Order** sets the order, in the menu bar and the panel (drag, or use the arrows), and **Shows** can cut it down to the AI you used last. A number turns orange at 20% left, red at 10%, and orange earlier if it's on course to run out. Prefer both limits at once? Switch to **Two rows** (5-hour over weekly):
 
@@ -42,14 +42,15 @@ A macOS menu bar app that shows how much of your AI plans you have left, and whe
 
 **Panel.** Click the menu bar item:
 - Plan limits left per account, with reset times
-- "On pace" or "Runs out in …"
+- "On pace" or "Runs out in …". A limit you used hard and then stopped using (nothing in the last fifth of the round, an hour of five) says On pace.
+- With more than one Claude account: when one is at 20% or less (or on course to run out before its reset) and another clearly has more, a line under the limits says so ("Work has 80% left — switch to it for now"). **Copy** copies the command that opens Claude Code with that account (`CLAUDE_CONFIG_DIR=… claude`); × hides it until that limit resets. It doesn't show with one account, with old numbers, or when the accounts are about even.
 - Today's API-equivalent spend and tokens, by Claude account, by model and by project. Models without a known price say "price unknown" instead of showing $0.00.
 - The last 7 days as small bars, split by AI (each Claude account its own colour), with a legend under them that gives each AI's 7-day total. An AI that used only a little still gets a thin visible slice; the totals stay exact. Paceline keeps a daily summary for 30 days in `~/Library/Application Support/Paceline/history.json`: tokens and $ per AI, and the lowest 5-hour and weekly percentages left. It writes the file at most every 5 minutes.
 
 Old data is dimmed and says how old it is.
 
 **Notifications** (off by default):
-- at 20% and 10% left
+- at 20% and 10% left (with several Claude accounts, the same alert says which one has more left)
 - when a limit will run out within 30 minutes
 - when a 5-hour limit that ran low resets
 
@@ -83,6 +84,8 @@ open ~/Applications/Paceline.app
 
 Each update is checked against the release's sha256 file. That proves the download is complete and unchanged in transit, but it isn't a signature: Paceline is ad-hoc signed and not notarized.
 
+**Report a Problem…** sits in the right-click menu and in Settings → General, next to the version. It shows the text it would add to a report before you copy it: Paceline's version, macOS, Mac type, whether it came from Homebrew, a few settings, the number of added Claude accounts, and each AI's status (Ready, Needs sign-in, Not installed or Can't read) with what was found (plan %, tokens, sign-in). It has no email, account name, project, path or token. **Copy** puts it on the clipboard and **Open GitHub Issue** opens an empty bug form to paste it into; nothing is sent by itself.
+
 ## Plan limits: the easy way
 
 Turn on **Settings → General → Fetch fresh numbers when stale** (off by default). When a plan's numbers are over 15 minutes old, or missing, Paceline asks the AI's own command-line tool for them:
@@ -101,6 +104,8 @@ Claude Code also shares its plan limits with its status line. Claude's ⓘ in Se
 ```
 
 Paceline's status line prints the model, context and limits left (`Opus 5.5 · ctx 40% · 5h 62% · Week 71% left`). It keeps only the percentages and reset times.
+
+To see a warning there too, turn on **Show pace in Claude Code's status line** under Claude's ⓘ (or add `--show` to the command). When a limit is running out, it adds `· 5h runs out in 1h 12m`; otherwise the line stays the same. It's off by default, and works only with Paceline's own status line.
 
 For another account (`CLAUDE_CONFIG_DIR=~/.claude-work`), **Add Claude account…** can add the same line to that account's `settings.json` for you. It asks first, and never replaces a status line that's already there.
 
@@ -152,7 +157,7 @@ The Codex desktop app fetches them live and doesn't save them anywhere on your M
 They come from Antigravity's `agy` command. Install it and turn on Fetch fresh numbers.
 
 **How is "Runs out in" worked out?**
-Paceline takes the average rate since the window began. It only warns once you're a quarter of the way in, and only if you'd run out at least 15 minutes (or 5% of the window) before the reset.
+Paceline's rate is half the average since the window began and half the rate lately (the last fifth of the window, an hour of five), so a burst doesn't swing it much and a limit you've stopped using says On pace. It only warns once you're a quarter of the way in, and only if you'd run out at least 15 minutes (or 5% of the window) before the reset.
 
 **Can it see my conversations?**
 Paceline goes through the log files to add up usage, but uses only token counts, model names and project folder names. Message text is never kept, shown or sent.

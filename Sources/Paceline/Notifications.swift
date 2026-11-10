@@ -14,9 +14,12 @@ enum PlanAlerts {
     }
 
     /// The alerts due now, and what's been said once they're posted. Old data says nothing.
-    static func due(_ plans: [PlanUsage], sent: Set<String>, now: Date = Date()) -> (alerts: [Alert], sent: Set<String>) {
+    /// `accounts`: the extra Claude accounts; a 20% or 10% alert for a Claude
+    /// account then says which one has more left (AccountSwitch), in the same alert.
+    static func due(_ plans: [PlanUsage], sent: Set<String>, now: Date = Date(), accounts: [ClaudeAccount] = []) -> (alerts: [Alert], sent: Set<String>) {
         var sent = sent, alerts: [Alert] = []
         for plan in plans where !plan.isStale(now: now) {
+            let hint = AccountSwitch.hint(plans, accounts: accounts, now: now, from: plan.agent).map { " " + $0.text + "." } ?? ""
             for window in plan.windows {
                 guard let resets = window.resets else { continue }
                 let round = "\(plan.id)|\(window.label)|\(Int(resets.timeIntervalSince1970))"
@@ -25,10 +28,11 @@ enum PlanAlerts {
                 // 20% and 10%, once each a round; straight past both says the lower one.
                 let crossed = [20, 10].filter { window.left <= $0 }
                 if let lowest = crossed.filter({ !sent.contains("\(round)|\($0)") }).last {
-                    alerts.append(Alert(id: "\(round)|\(lowest)", title: "\(plan.title): \(window.left)% of the \(name) limit left", body: body))
+                    alerts.append(Alert(id: "\(round)|\(lowest)", title: "\(plan.title): \(window.left)% of the \(name) limit left",
+                                        body: (body + hint).trimmingCharacters(in: .whitespaces)))
                 }
                 crossed.forEach { sent.insert("\(round)|\($0)") }
-                if case .runsOut(let seconds)? = window.pace(now: now), seconds <= 30 * 60, sent.insert("\(round)|runsout").inserted {
+                if case .runsOut(let seconds)? = plan.pace(window, now: now), seconds <= 30 * 60, sent.insert("\(round)|runsout").inserted {
                     alerts.append(Alert(id: "\(round)|runsout",
                                         title: "\(plan.title): \(name) limit runs out in \(PlanWindow.duration(seconds))", body: body))
                 }
