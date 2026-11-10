@@ -40,6 +40,7 @@ enum Pricing {
         func has(_ s: String) -> Bool { m.contains(s) }
         if m.hasPrefix("gemini") { return gemini(m, on: date) }
         if m.hasPrefix("gpt-") { return openAI(m) }
+        if has("fable-5-2") || has("mythos-5-2") { return Price(input: 8, output: 40, cacheRead: 0.20) }
         if has("fable-5-1") || has("mythos-5-1") { return Price(input: 10, output: 50, cacheRead: 0.25) }
         if has("fable-5") || has("mythos-5") { return Price(input: 10, output: 50, cacheRead: 1) }
         if has("opus-5-5") { return Price(input: 4, output: 20, cacheRead: 0.20) }

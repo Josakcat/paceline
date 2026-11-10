@@ -447,6 +447,7 @@ struct SettingsView: View {
             if account.agent == "Claude" && group != .notInstalled {
                 Divider()
                 claudePlanUsage
+                fableWeekNote
                 Toggle(isOn: Bindable(model).statusLinePace) {
                     Text("Show pace in Claude Code’s status line")
                     Text("Adds “5h runs out in 1h 12m” when a limit is running out. Only with Paceline’s status line.")
@@ -456,6 +457,7 @@ struct SettingsView: View {
             if let extra {
                 Divider()
                 extraPlanUsage(extra)
+                fableWeekNote
             }
             if signedIn(account), let link = provider?.usagePage {
                 Button("View Usage") { NSWorkspace.shared.open(link) }.controlSize(.small)
@@ -482,6 +484,13 @@ struct SettingsView: View {
 
     private func signedIn(_ account: AccountInfo) -> Bool {
         !["Not installed", "Not signed in", "Installed"].contains(account.status)
+    }
+
+    /// Says the Fable week row needs Fetch fresh numbers, while that's off.
+    @ViewBuilder private var fableWeekNote: some View {
+        if let note = AccountsLayout.fableWeekNote(fetchFresh: model.fetchFresh) {
+            Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// "Today 2.4M tokens · $2.29", or nothing when it wasn't used today.

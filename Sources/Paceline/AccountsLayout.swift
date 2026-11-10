@@ -58,6 +58,11 @@ enum AccountsLayout {
     }
 
     /// Add Claude account… waits for Claude itself to be signed in.
+    /// Under a Claude account's ⓘ: the Fable week row needs Fetch fresh numbers; nothing when it's on.
+    static func fableWeekNote(fetchFresh: Bool) -> String? {
+        fetchFresh ? nil : "Fable week shows when Fetch fresh numbers is on (Settings → General)"
+    }
+
     static func offersAddClaude(_ claude: AccountInfo) -> Bool { claude.isSignedIn }
 
     /// "4 ready · 1 needs sign-in · 9 not installed", each account once; groups with no one are left out.

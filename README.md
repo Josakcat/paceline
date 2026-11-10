@@ -90,7 +90,7 @@ Each update is checked against the release's sha256 file. That proves the downlo
 
 Turn on **Settings → General → Fetch fresh numbers when stale** (off by default). When a plan's numbers are over 15 minutes old, or missing, Paceline asks the AI's own command-line tool for them:
 
-- **Claude Code (each account):** `claude -p` is asked for its usage through its control channel. No prompt is sent and nothing is billed. It starts without your settings, hooks or MCP servers, in an empty temporary folder, and is closed after.
+- **Claude Code (each account):** `claude -p` is asked for its usage through its control channel. No prompt is sent and nothing is billed. It starts without your settings, hooks or MCP servers, in an empty temporary folder, and is closed after. Its answer also has Fable's own weekly cap (up to a share of the weekly limit), which the panel shows as a **Fable week** row under Week. Only Fetch fresh numbers gets it: the status line doesn't carry it.
 - **Antigravity:** `agy -p /usage`, the same table the `/usage` command shows. It starts no conversation.
 
 Each account is asked at most once every 15 minutes, and also when you open the panel. Paceline itself still sends nothing. These tools fetch the numbers from their own services, signed in as you, just as they do when you use them. This needs the `claude` or `agy` command installed.

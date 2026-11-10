@@ -311,10 +311,13 @@ final class AppModel {
         }
     }
 
-    /// "5h 59% · Week 38% left", for Settings → Accounts.
+    /// "5h 59% · Week 38% · Fable week 90% left", for Settings → Accounts (Fable week only when known).
     static func planSummary(_ plans: [PlanUsage]) -> String? {
-        let rows = planRows(plans)
-        return rows.isEmpty ? nil : rows.map { "\($0.window) \($0.text)%" }.joined(separator: " · ") + " left"
+        var parts = planRows(plans).map { "\($0.window) \($0.text)%" }
+        if let fable = plans.compactMap({ $0.window(PlanWindow.fableWeek) }).min(by: { $0.left < $1.left }) {
+            parts.append("\(PlanWindow.fableWeek) \(fable.left)%")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ") + " left"
     }
 
     /// "as of 7 h ago" when the newest of these plans is stale.

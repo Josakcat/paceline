@@ -397,8 +397,10 @@ struct PlanSection: View {
                             }
                         }
                         if entry.plans.count == 1 {
+                            let labelWidth: CGFloat = entry.plans[0].windows.contains { $0.isModelScoped } ? 62 : 34
                             ForEach(entry.plans[0].windows) { window in
-                                WindowBar(window: window, now: context.date, stale: stale, pace: entry.plans[0].pace(window, now: context.date))
+                                WindowBar(window: window, now: context.date, stale: stale, pace: entry.plans[0].pace(window, now: context.date),
+                                          labelWidth: labelWidth)
                             }
                         } else {
                             ForEach(entry.plans) { GroupRow(plan: $0, now: context.date, stale: stale) }
@@ -631,6 +633,8 @@ private struct WindowBar: View {
     let now: Date
     var stale = false
     var pace: PlanWindow.Pace? = nil
+    /// Wider when one row is "Fable week", so the bars still line up.
+    var labelWidth: CGFloat = 34
 
     /// Red, orange (the menu bar's rule), else green; grey when old or reset with nothing new.
     static func tint(_ window: PlanWindow, stale: Bool) -> Color {
@@ -641,7 +645,7 @@ private struct WindowBar: View {
     var body: some View {
         let tint = Self.tint(window, stale: stale)
         HStack(spacing: 8) {
-            Text(window.label).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).frame(width: 34, alignment: .leading)
+            Text(window.label).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).frame(width: labelWidth, alignment: .leading)
             GeometryReader { geo in
                 Capsule().fill(.white.opacity(0.08))
                     .overlay(alignment: .leading) {
@@ -655,7 +659,7 @@ private struct WindowBar: View {
                 .frame(width: 92, alignment: .leading).lineLimit(1)
         }
         if case .runsOut(let seconds)? = pace {
-            RunsOutLine(label: nil, seconds: seconds, resets: nil).padding(.leading, 42)
+            RunsOutLine(label: nil, seconds: seconds, resets: nil).padding(.leading, labelWidth + 8)
         }
     }
 }

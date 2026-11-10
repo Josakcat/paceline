@@ -63,6 +63,9 @@ extension SelfTest {
               && !AccountsLayout.offersAddClaude(AccountInfo(agent: "Claude", status: "Not installed"))
               && AccountsLayout.offersAddClaude(AccountInfo(agent: "Claude", status: "you@example.com")),
               "Add Claude account… waits for Claude's own sign-in")
+        check(AccountsLayout.fableWeekNote(fetchFresh: false) == "Fable week shows when Fetch fresh numbers is on (Settings → General)"
+              && AccountsLayout.fableWeekNote(fetchFresh: true) == nil,
+              "Claude ⓘ: Fable week needs Fetch fresh numbers — said only while it's off")
 
         // agy: the file there → signed in; not there → Unknown, not "needs sign-in", no card, but Sign in… in Settings.
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("paceline-agy-\(UUID().uuidString)")

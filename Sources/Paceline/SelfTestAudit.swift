@@ -191,6 +191,13 @@ extension SelfTest {
         check(Pricing.displayName("claude-3-5-sonnet-20241022") == "Sonnet 3.5" && Pricing.displayName("claude-opus-5-5") == "Opus 5.5"
               && Pricing.displayName("claude-3-haiku-20240307") == "Haiku 3", "model names: \(Pricing.displayName("claude-3-5-sonnet-20241022"))")
 
+        // Fable/Mythos 5.2 is checked before 5.1 and 5, so it gets its own price.
+        func priced(_ m: String) -> String { Pricing.price(for: m).map { "\($0.input)/\($0.output)/\($0.cacheRead)" } ?? "nil" }
+        check(priced("claude-fable-5-2") == "8.0/40.0/0.2" && priced("claude-mythos-5-2") == "8.0/40.0/0.2"
+              && priced("claude-fable-5-1") == "10.0/50.0/0.25" && priced("claude-fable-5") == "10.0/50.0/1.0"
+              && Pricing.displayName("claude-fable-5-2") == "Fable 5.2",
+              "Fable prices: \(priced("claude-fable-5-2")), \(priced("claude-fable-5-1")), \(priced("claude-fable-5"))")
+
         // #F7: a command that ignores SIGTERM is killed after its time limit, not waited on forever.
         let started = Date()
         let output = FreshLimits.run("/bin/sh", ["-c", "trap '' TERM; echo started; sleep 4"], timeout: 1)

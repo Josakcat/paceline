@@ -604,6 +604,25 @@ enum SelfTest {
         let saved = windows.map { $0.merging(["saved_at": 1_794_100_000.0]) { $1 } } ?? [:]
         let plan = PlanUsageReader.claude(saved, agent: "Claude", now: Date(timeIntervalSince1970: 1_794_100_060))
         check(plan?.window("5h")?.left == 34 && plan?.window("Week")?.left == 88, "saved like the status line: 5h 34% · Week 88% left")
+        // Fable's weekly cap: get_usage's model_scoped row named "Fable" → a "Fable week" window, shown only when there.
+        check(plan?.window(PlanWindow.fableWeek) == nil && AppModel.planSummary([plan].compactMap { $0 }) == "5h 34% · Week 88% left",
+              "no model_scoped: no Fable week")
+        let scoped: [String: Any] = ["seven_day": ["utilization": 12, "resets_at": "2026-11-14T19:00:00+00:00"],
+                                     "model_scoped": [["display_name": "Opus", "utilization": 50, "resets_at": NSNull()],
+                                                      ["display_name": "Fable", "utilization": 40, "resets_at": "2026-11-15T02:00:00Z"]]]
+        let fableSaved = (FreshLimits.windows(fromUsage: scoped) ?? [:]).merging(["saved_at": 1_794_100_000.0]) { $1 }
+        let fableNow = Date(timeIntervalSince1970: 1_794_100_060)
+        let fablePlan = PlanUsageReader.claude(fableSaved, agent: "Claude", now: fableNow)
+        let fable = fablePlan?.window(PlanWindow.fableWeek)
+        check(fable?.left == 60 && fable?.resets.map { Int($0.timeIntervalSince1970) } == 1_794_708_000 && fable?.length == 7 * 86400
+              && fablePlan?.windows.map(\.label) == ["Week", PlanWindow.fableWeek],
+              "model_scoped Fable 40% used → Fable week 60% left, under Week, a 7-day round")
+        check(AppModel.planSummary([fablePlan].compactMap { $0 }) == "Week 88% · Fable week 60% left", "Accounts ⓘ: Week 88% · Fable week 60% left")
+        let kept = PlanUsageReader.merged(["five_hour": ["used": 10, "resets_at": 1_794_110_000]], into: fableSaved)
+        check(kept["seven_day_fable"] != nil, "a status-line update (5h and week only) keeps the fetched Fable week")
+        let lowFable = PlanUsage(agent: "Claude", windows: [PlanWindow(label: "Week", left: 80, resets: fableNow.addingTimeInterval(86400)),
+                                                            PlanWindow(label: PlanWindow.fableWeek, left: 5, resets: fableNow.addingTimeInterval(86400))], at: fableNow)
+        check(PlanAlerts.due([lowFable], sent: [], now: fableNow).alerts.isEmpty, "Fable week at 5% left sends no alert (panel only)")
 
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let targets = [FreshLimits.Target(id: "claude", kind: .claude(configDir: nil), at: now.addingTimeInterval(-20 * 60)),

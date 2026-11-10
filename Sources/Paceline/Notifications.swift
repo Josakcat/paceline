@@ -20,7 +20,7 @@ enum PlanAlerts {
         var sent = sent, alerts: [Alert] = []
         for plan in plans where !plan.isStale(now: now) {
             let hint = AccountSwitch.hint(plans, accounts: accounts, now: now, from: plan.agent).map { " " + $0.text + "." } ?? ""
-            for window in plan.windows {
+            for window in plan.windows where !window.isModelScoped {
                 guard let resets = window.resets else { continue }
                 let round = "\(plan.id)|\(window.label)|\(Int(resets.timeIntervalSince1970))"
                 let name = PlanWindow.spokenName(window.label)

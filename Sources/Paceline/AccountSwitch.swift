@@ -34,11 +34,11 @@ enum AccountSwitch {
             plans.first { $0.agent == name && $0.group == nil && !$0.isStale(now: now) && !$0.windows.isEmpty }
         }
         guard fresh.count >= 2 else { return nil }
-        func headroom(_ plan: PlanUsage) -> Int { plan.windows.map(\.left).min() ?? 0 }
+        func headroom(_ plan: PlanUsage) -> Int { plan.windows.filter { !$0.isModelScoped }.map(\.left).min() ?? 0 }
         /// The window that makes a plan low, the emptiest first.
         func lowWindow(_ plan: PlanUsage) -> PlanWindow? {
             plan.windows.filter { w in
-                guard !w.wasReset, w.resets.map({ $0 > now }) ?? true else { return false }
+                guard !w.isModelScoped, !w.wasReset, w.resets.map({ $0 > now }) ?? true else { return false }
                 if w.left <= lowAt { return true }
                 if case .runsOut? = plan.pace(w, now: now) { return true }
                 return false

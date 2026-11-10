@@ -67,12 +67,17 @@ enum FreshLimits {
     /// `{"five_hour": {"utilization": 66, "resets_at": "2026-11-08T06:40:00.28+00:00"}, …}`
     /// → `{"five_hour": {"used": 66, "resets_at": 1794119200}, …}`; nil when it's empty
     /// (it can be, right after the account's first request).
+    /// Fable's own weekly cap comes as `"model_scoped": [{"display_name": "Fable",
+    /// "utilization": 0, "resets_at": "…"}]` and is saved as `seven_day_fable`.
     static func windows(fromUsage limits: [String: Any]) -> [String: Any]? {
         let iso = ISO8601DateFormatter(), fractions = ISO8601DateFormatter()
         fractions.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var named = limits
+        let scoped = limits["model_scoped"] as? [[String: Any]] ?? []
+        named["seven_day_fable"] = scoped.first { ($0["display_name"] as? String)?.lowercased() == "fable" }
         var out: [String: Any] = [:]
-        for key in ["five_hour", "seven_day"] {
-            guard let window = limits[key] as? [String: Any], let used = (window["utilization"] as? NSNumber)?.doubleValue else { continue }
+        for key in ["five_hour", "seven_day", "seven_day_fable"] {
+            guard let window = named[key] as? [String: Any], let used = (window["utilization"] as? NSNumber)?.doubleValue else { continue }
             var entry: [String: Any] = ["used": used]
             if let stamp = window["resets_at"] as? String, let date = fractions.date(from: stamp) ?? iso.date(from: stamp) {
                 entry["resets_at"] = date.timeIntervalSince1970

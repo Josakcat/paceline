@@ -29,8 +29,14 @@ extension PlanWindow {
         case runsOut(in: TimeInterval)   // before it resets
     }
 
+    /// Claude's own weekly cap for Fable, a share of the whole week's: only
+    /// `get_usage` (Fetch fresh numbers) gives it, in `model_scoped`.
+    static let fableWeek = "Fable week"
+    /// One model's window, not the whole plan's: shown, but no alerts or account switches.
+    var isModelScoped: Bool { label == Self.fableWeek }
+
     /// 5 hours, a day or 7 days, from the label.
-    var length: TimeInterval? { ["5h": 5 * 3600, "Day": 86400, "Week": 7 * 86400][label] }
+    var length: TimeInterval? { ["5h": 5 * 3600, "Day": 86400, "Week": 7 * 86400, Self.fableWeek: 7 * 86400][label] }
 
     /// "5-hour", "daily", "weekly", for notifications and VoiceOver.
     static func spokenName(_ label: String) -> String { label == "5h" ? "5-hour" : label == "Day" ? "daily" : "weekly" }
@@ -271,7 +277,7 @@ enum PlanUsageReader {
 
     static func claude(_ saved: [String: Any], agent: String, now: Date = Date()) -> PlanUsage? {
         guard let at = (saved["saved_at"] as? NSNumber)?.doubleValue else { return nil }
-        let windows: [PlanWindow] = [("five_hour", "5h"), ("seven_day", "Week")].compactMap { key, label in
+        let windows: [PlanWindow] = [("five_hour", "5h"), ("seven_day", "Week"), ("seven_day_fable", PlanWindow.fableWeek)].compactMap { key, label in
             guard let entry = saved[key] as? [String: Any], let used = (entry["used"] as? NSNumber)?.doubleValue else { return nil }
             let resets = (entry["resets_at"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
             return window(label, left: Int(percent: 100 - used), resets: resets, now: now)
@@ -429,7 +435,7 @@ enum PlanUsageReader {
 
     /// New windows over the saved ones: an update with only the five hours keeps the week.
     static func merged(_ windows: [String: Any], into old: [String: Any]?, now: Date = Date()) -> [String: Any] {
-        var keep = (old ?? [:]).filter { ["five_hour", "seven_day"].contains($0.key) }
+        var keep = (old ?? [:]).filter { ["five_hour", "seven_day", "seven_day_fable"].contains($0.key) }
         keep.merge(windows) { $1 }
         keep["saved_at"] = now.timeIntervalSince1970
         return keep
