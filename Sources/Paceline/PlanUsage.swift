@@ -137,7 +137,7 @@ struct PaceLog: Sendable {
 struct PlanUsage: Equatable, Identifiable, Sendable {
     let agent: String
     var group: String?
-    let windows: [PlanWindow]
+    var windows: [PlanWindow]
     let at: Date
     /// Saved by Paceline asking the AI itself (Fetch fresh numbers), not by
     /// using it: its time says nothing about which AI was used last.
@@ -251,14 +251,23 @@ enum PlanUsageReader {
         newest(claudeFiles, agent: "Claude", now: now)
     }
 
-    /// The most recently saved of these files.
+    /// The most recently saved of these files. A window it lacks (Fable week,
+    /// which only Fetch fresh numbers saves, while a status line writes more
+    /// often) comes from the newest other file that has it, if its round
+    /// hasn't reset. The newest file's `at` and `fetched` stay as they are.
     static func newest(_ files: [URL], agent: String, now: Date = Date()) -> PlanUsage? {
         let plans = files.compactMap { url -> PlanUsage? in
             guard let data = try? Data(contentsOf: url),
                   let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
             return claude(saved, agent: agent, now: now)
+        }.sorted { $0.at > $1.at }
+        guard var plan = plans.first else { return nil }
+        let order = ["5h", "Week", PlanWindow.fableWeek]
+        for older in plans.dropFirst() {
+            for w in older.windows where !w.wasReset && plan.window(w.label) == nil { plan.windows.append(w) }
         }
-        return plans.max { $0.at < $1.at }
+        plan.windows.sort { (order.firstIndex(of: $0.label) ?? 9) < (order.firstIndex(of: $1.label) ?? 9) }
+        return plan
     }
 
     /// An extra account's file, same format, under its name.

@@ -623,6 +623,31 @@ enum SelfTest {
         let lowFable = PlanUsage(agent: "Claude", windows: [PlanWindow(label: "Week", left: 80, resets: fableNow.addingTimeInterval(86400)),
                                                             PlanWindow(label: PlanWindow.fableWeek, left: 5, resets: fableNow.addingTimeInterval(86400))], at: fableNow)
         check(PlanAlerts.due([lowFable], sent: [], now: fableNow).alerts.isEmpty, "Fable week at 5% left sends no alert (panel only)")
+        // Two files for one account: a newer status-line one (no Fable) and an older fetched one with Fable.
+        let twoDir = FileManager.default.temporaryDirectory.appendingPathComponent("paceline-two-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: twoDir, withIntermediateDirectories: true)
+        func twoFile(_ name: String, _ json: [String: Any]) -> URL {
+            let url = twoDir.appendingPathComponent(name)
+            try? JSONSerialization.data(withJSONObject: json).write(to: url)
+            return url
+        }
+        let t = fableNow.timeIntervalSince1970
+        let newer = twoFile("new.json", ["saved_at": t - 60, "five_hour": ["used": 30, "resets_at": t + 3600], "seven_day": ["used": 20, "resets_at": t + 86400]])
+        let olderFable = twoFile("old.json", ["saved_at": t - 3000, "fetched": true, "five_hour": ["used": 90, "resets_at": t + 3600],
+                                              "seven_day": ["used": 90, "resets_at": t + 86400], "seven_day_fable": ["used": 40, "resets_at": t + 86400]])
+        let olderReset = twoFile("reset.json", ["saved_at": t - 3000, "seven_day": ["used": 90, "resets_at": t + 86400],
+                                                "seven_day_fable": ["used": 40, "resets_at": t - 60]])
+        let both = PlanUsageReader.newest([olderFable, newer], agent: "Claude", now: fableNow)
+        check(both?.window("5h")?.left == 70 && both?.window("Week")?.left == 80 && both?.window(PlanWindow.fableWeek)?.left == 60
+              && both?.windows.map(\.label) == ["5h", "Week", PlanWindow.fableWeek]
+              && both?.at == Date(timeIntervalSince1970: t - 60) && both?.fetched == false,
+              "newest file without Fable + older with Fable → 5h/Week from the newest, Fable week from the older; its time kept")
+        check(PlanUsageReader.newest([olderReset, newer], agent: "Claude", now: fableNow)?.window(PlanWindow.fableWeek) == nil,
+              "an older file's Fable week that has reset since isn't borrowed")
+        let plain = twoFile("plain.json", ["saved_at": t - 3000, "seven_day": ["used": 90, "resets_at": t + 86400]])
+        check(PlanUsageReader.newest([plain, newer], agent: "Claude", now: fableNow)?.windows.map(\.label) == ["5h", "Week"],
+              "neither file has Fable → no Fable week")
+        try? FileManager.default.removeItem(at: twoDir)
 
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let targets = [FreshLimits.Target(id: "claude", kind: .claude(configDir: nil), at: now.addingTimeInterval(-20 * 60)),
