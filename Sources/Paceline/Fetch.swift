@@ -23,12 +23,25 @@ enum FreshLimits {
         let at: Date?                           // when its plan was saved, if it was
     }
 
-    /// Who to ask now: a missing or 15-minute-old plan, not asked in the last 15 minutes.
-    static func due(_ targets: [Target], lastAsked: [String: Date], now: Date = Date()) -> [Target] {
+    /// An account whose `get_usage` answered with no `rate_limits` isn't asked
+    /// again by itself for this long: it stays empty until that account sends a
+    /// real message, and its numbers come from the status line meanwhile.
+    static let quietAfterEmpty: TimeInterval = 6 * 60 * 60
+
+    /// Who to ask now: a missing or 15-minute-old plan, not asked in the last
+    /// 15 minutes, and not answered empty (`emptyAt`) in the last 6 hours.
+    static func due(_ targets: [Target], lastAsked: [String: Date], emptyAt: [String: Date] = [:], now: Date = Date()) -> [Target] {
         targets.filter { target in
             (target.at.map { now.timeIntervalSince($0) >= every } ?? true)
                 && (lastAsked[target.id].map { now.timeIntervalSince($0) >= every } ?? true)
+                && (emptyAt[target.id].map { now.timeIntervalSince($0) >= quietAfterEmpty } ?? true)
         }
+    }
+
+    enum Outcome: Sendable, Equatable {
+        case saved
+        case empty      // it answered, with no numbers in it
+        case failed     // not installed, timed out, or nothing to read
     }
 
     // MARK: - Commands
@@ -45,21 +58,24 @@ enum FreshLimits {
     }
 
     /// Asks and saves. Blocks: call off the main thread.
-    static func fetch(_ target: Target) {
+    @discardableResult
+    static func fetch(_ target: Target) -> Outcome {
         switch target.kind {
         case .claude(let configDir):
-            guard let command = claudeCommand, let limits = askClaude(command, configDir: configDir),
-                  let windows = windows(fromUsage: limits) else { return }
+            guard let command = claudeCommand, let limits = askClaude(command, configDir: configDir) else { return .failed }
+            guard let windows = windows(fromUsage: limits) else { return .empty }
             PlanUsageReader.save(windows, to: target.id == "claude" ? PlanUsageReader.ownClaudeFile : PlanUsageReader.claudeFile(account: target.id),
                                  fetched: true)
+            return .saved
         case .antigravity:
             guard let command = agyCommand,
                   let table = run(command, ["-p", "/usage", "--print-timeout", "20s"], timeout: 25),
                   table.contains("%"),
-                  let data = try? JSONSerialization.data(withJSONObject: ["at": Date().timeIntervalSince1970, "table": table, "fetched": true] as [String: Any]) else { return }
+                  let data = try? JSONSerialization.data(withJSONObject: ["at": Date().timeIntervalSince1970, "table": table, "fetched": true] as [String: Any]) else { return .failed }
             let file = PlanUsageReader.ownAntigravityFile
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: file, options: .atomic)
+            return .saved
         }
     }
 

@@ -327,6 +327,8 @@ final class AppController {
     // MARK: - Fetch fresh numbers (opt-in)
 
     private var lastAsked: [String: Date] = [:]
+    /// Accounts whose answer had no numbers, and when: left alone for 6 hours.
+    private var emptyAt: [String: Date] = [:]
     private var fetching = false
     private var fetchStarted = Date.distantPast
 
@@ -348,14 +350,17 @@ final class AppController {
         if FreshLimits.agyCommand != nil {
             targets.append(.init(id: "antigravity", kind: .antigravity, at: model.plans.filter { $0.agent == "Antigravity" }.map(\.at).max()))
         }
-        let due = FreshLimits.due(targets, lastAsked: lastAsked)
+        let due = FreshLimits.due(targets, lastAsked: lastAsked, emptyAt: emptyAt)
         guard !due.isEmpty else { return }
         let now = Date()
         due.forEach { lastAsked[$0.id] = now }
         fetching = true
         fetchStarted = now
         Task {
-            await Task.detached(priority: .utility) { due.forEach(FreshLimits.fetch) }.value
+            let outcomes = await Task.detached(priority: .utility) { due.map { ($0.id, FreshLimits.fetch($0)) } }.value
+            for (id, outcome) in outcomes where outcome != .failed {
+                emptyAt[id] = outcome == .empty ? Date() : nil
+            }
             fetching = false
             refreshPlans()
         }
@@ -363,7 +368,10 @@ final class AppController {
 
     func setFetchFresh(_ on: Bool) {
         model.fetchFresh = on
-        if on { fetchFreshIfDue() }
+        if on {
+            emptyAt = [:]   // turned on by hand: everyone is asked again
+            fetchFreshIfDue()
+        }
     }
 
     /// Plan alerts, when they're on: what's due is posted and remembered, so a
@@ -638,7 +646,12 @@ final class AppController {
             for (name, view) in [("panel", panelOpen ? panel.contentView : nil), ("settings", settingsWindow.contentView),
                                  ("sheet", settingsWindow.sheetView), ("report", reportWindow.contentView), ("menubar", statusItem.buttonView),
                                  ("popover", NSApp.windows.first { $0.isVisible && String(describing: type(of: $0)).contains("Popover") }?.contentView)] {
-                guard let view, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+                // Always 2x, whichever screen the window is on, so README shots stay sharp.
+                guard let view, let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width * 2),
+                                                          pixelsHigh: Int(view.bounds.height * 2), bitsPerSample: 8, samplesPerPixel: 4,
+                                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                                          bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+                rep.size = view.bounds.size
                 view.cacheDisplay(in: view.bounds, to: rep)
                 // Windows over their own background (a sheet's or popover's is otherwise clear);
                 // the panel keeps its rounded corners.

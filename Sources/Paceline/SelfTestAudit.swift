@@ -179,8 +179,24 @@ extension SelfTest {
         let latestName = AIReading.shown(model.aiReadings, shows: .latest).first?.name
         check(latestName == "Codex", "latest used: Codex used 10 min ago beats Claude's fetched-just-now plan → \(latestName ?? "none")")
         check(PlanUsageReader.claude(["saved_at": now.timeIntervalSince1970, "five_hour": ["used": 10], "fetched": true], agent: "Claude", now: now)?.fetched == true
-              && PlanUsageReader.merged(["five_hour": ["used": 5]], into: ["fetched": true, "seven_day": ["used": 1]])["fetched"] == nil,
+              && PlanUsageReader.merged(["five_hour": ["used": 5]], into: ["fetched": true, "seven_day": ["used": 1, "resets_at": now.timeIntervalSince1970 + 60]])["fetched"] == nil,
               "fetched is read back, and a later save by use (status line) clears it")
+
+        // A status line save (no Fable) keeps the saved Fable week while its round runs; a reset one goes.
+        do {
+            let t = now.timeIntervalSince1970
+            let fresh: [String: Any] = ["five_hour": ["used": 40, "resets_at": t + 3600], "seven_day": ["used": 20, "resets_at": t + 86400]]
+            let saved: [String: Any] = ["fetched": true, "five_hour": ["used": 10, "resets_at": t + 3600],
+                                        "seven_day_fable": ["used": 7, "resets_at": t + 5 * 86400]]
+            let kept = PlanUsageReader.merged(fresh, into: saved, now: now)
+            let used = { (m: [String: Any], k: String) in ((m[k] as? [String: Any])?["used"] as? NSNumber)?.doubleValue }
+            var gone = saved; gone["seven_day_fable"] = ["used": 7, "resets_at": t - 60]
+            var newer = fresh; newer["seven_day_fable"] = ["used": 30, "resets_at": t + 6 * 86400]
+            check(used(kept, "five_hour") == 40 && used(kept, "seven_day") == 20 && used(kept, "seven_day_fable") == 7 && kept["fetched"] == nil
+                  && PlanUsageReader.merged(fresh, into: gone, now: now)["seven_day_fable"] == nil
+                  && used(PlanUsageReader.merged(newer, into: saved, now: now), "seven_day_fable") == 30,
+                  "a status line save keeps the Fable week until it resets; a new Fable week wins")
+        }
 
         // #F21: a pre-release isn't newer than its release; a prefix before the version is skipped.
         check(!Updates.isNewer("v1.0.0-beta.2", than: "1.0.0") && Updates.isNewer("1.0.0", than: "1.0.0-beta.2")

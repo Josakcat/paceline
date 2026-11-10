@@ -658,6 +658,12 @@ enum SelfTest {
               "asked a minute ago: not again for 15 minutes")
         check(FreshLimits.due(targets, lastAsked: ["claude": now.addingTimeInterval(-16 * 60)], now: now).map(\.id) == ["claude", "antigravity"],
               "15 minutes later: asked again")
+        check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["claude": now.addingTimeInterval(-3600)], now: now).map(\.id) == ["antigravity"],
+              "answered empty an hour ago: left alone")
+        check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["claude": now.addingTimeInterval(-7 * 3600)], now: now).map(\.id) == ["claude", "antigravity"],
+              "answered empty 7 hours ago: asked again")
+        check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["work": now.addingTimeInterval(-3600)], now: now).map(\.id) == ["claude", "antigravity"],
+              "another account's empty answer doesn't hold this one back")
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("paceline-fresh-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

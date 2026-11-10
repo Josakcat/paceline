@@ -442,9 +442,15 @@ enum PlanUsageReader {
         if let data = try? JSONSerialization.data(withJSONObject: saved) { try? data.write(to: url, options: .atomic) }
     }
 
-    /// New windows over the saved ones: an update with only the five hours keeps the week.
+    /// New windows over the saved ones: an update with only the five hours keeps the week,
+    /// and a status line (which has no Fable) keeps the Fable week Fetch fresh numbers saved.
+    /// A saved window is kept only while its round hasn't reset; `fetched` is never kept.
     static func merged(_ windows: [String: Any], into old: [String: Any]?, now: Date = Date()) -> [String: Any] {
-        var keep = (old ?? [:]).filter { ["five_hour", "seven_day", "seven_day_fable"].contains($0.key) }
+        var keep = (old ?? [:]).filter { key, value in
+            guard key == "five_hour" || key == "seven_day" || key.hasPrefix("seven_day_"),
+                  let reset = ((value as? [String: Any])?["resets_at"] as? NSNumber)?.doubleValue else { return false }
+            return reset > now.timeIntervalSince1970
+        }
         keep.merge(windows) { $1 }
         keep["saved_at"] = now.timeIntervalSince1970
         return keep
