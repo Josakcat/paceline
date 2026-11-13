@@ -123,7 +123,7 @@ Everything is read from files on your Mac. Paceline never sends anything anywher
 
 | | Read from | Not used |
 |---|---|---|
-| Claude plan limits | What `Paceline --statusline`, `--claude-limits` or Fetch fresh numbers saved in `~/Library/Caches/Paceline/` | — |
+| Claude plan limits | What `Paceline --statusline`, `--claude-limits` or Fetch fresh numbers saved in `~/Library/Application Support/Paceline/` | — |
 | Antigravity plan limits | `agy -p /usage`'s table, saved by Fetch fresh numbers | — |
 | Claude sign-in | `oauthAccount` (email, plan) in `~/.claude.json` and each extra account's folder | Credentials (Paceline never asks the Keychain) |
 | Claude usage today | `~/.claude/projects/**/*.jsonl`: token counts, model, project folder name | Message text: it's parsed past, never kept or shown |

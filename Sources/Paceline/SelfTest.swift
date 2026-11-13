@@ -320,6 +320,36 @@ enum SelfTest {
               && PlanUsageReader.claudeFiles(legacy: true).contains { $0.path.contains("/Caches/AgentPet/") },
               "elsewhere, no AgentPet files are read")
 
+        // Caches → Application Support (0.1.9).
+        let support = "/Library/Application Support/Paceline/"
+        check(PlanUsageReader.ownClaudeFile.path.contains(support) && PlanUsageReader.claudeFile(account: "account2").path.contains(support)
+              && PlanUsageReader.ownAntigravityFile.path.contains(support) && UsageHistory.file.path.contains(support),
+              "plan numbers and history live in Application Support/Paceline")
+        check(!PlanUsageReader.claudeFiles(legacy: false).contains { $0.path.contains("/Caches/Paceline/") }
+              && PlanUsageReader.claudeFiles(legacy: false).contains { $0.path.contains("/Caches/Pixpaw/") }
+              && PlanUsageReader.antigravityFiles.contains { $0.path.contains("/Pixpaw/") },
+              "Pixpaw's files are still read where Pixpaw writes them")
+        let old = dir.appendingPathComponent("Caches/Paceline"), new = dir.appendingPathComponent("Application Support/Paceline")
+        try? FileManager.default.createDirectory(at: old.appendingPathComponent("src"), withIntermediateDirectories: true)
+        for name in ["claude-usage.json", "claude-usage-account2.json", "antigravity-usage.json", "assets-info.plist", "other.json"] {
+            try? Data("old \(name)".utf8).write(to: old.appendingPathComponent(name))
+        }
+        let moved = DataFolder.migrate(from: old, to: new)
+        func text(_ url: URL) -> String? { (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) } }
+        check(moved == ["antigravity-usage.json", "claude-usage-account2.json", "claude-usage.json"]
+              && text(new.appendingPathComponent("claude-usage.json")) == "old claude-usage.json"
+              && !FileManager.default.fileExists(atPath: old.appendingPathComponent("claude-usage.json").path),
+              "old plan files move over when the new folder has none")
+        check(["assets-info.plist", "other.json", "src"].allSatisfy { FileManager.default.fileExists(atPath: old.appendingPathComponent($0).path) }
+              && !FileManager.default.fileExists(atPath: new.appendingPathComponent("other.json").path),
+              "nothing else in Caches is moved or deleted")
+        try? Data("newer".utf8).write(to: new.appendingPathComponent("claude-usage.json"))
+        try? Data("stale".utf8).write(to: old.appendingPathComponent("claude-usage.json"))
+        check(DataFolder.migrate(from: old, to: new).isEmpty && text(new.appendingPathComponent("claude-usage.json")) == "newer"
+              && text(old.appendingPathComponent("claude-usage.json")) == "stale",
+              "an existing new file is never overwritten")
+        check(DataFolder.migrate(from: dir.appendingPathComponent("missing"), to: new).isEmpty, "no old folder, nothing to do")
+
         let suite = "com.josakcat.paceline.selftest-\(UUID().uuidString)"
         guard let fake = UserDefaults(suiteName: suite) else { check(false, "throwaway defaults suite"); return failures }
         defer { fake.removePersistentDomain(forName: suite) }

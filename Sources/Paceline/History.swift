@@ -145,8 +145,7 @@ struct UsageHistory: Codable, Equatable, Sendable {
 
     // MARK: - File
 
-    static let file = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Paceline/history.json")
+    static let file = DataFolder.url.appendingPathComponent("history.json")
 
     static func load() -> UsageHistory {
         guard !Demo.isOn else { return Demo.history() }

@@ -4,6 +4,8 @@ let arguments = CommandLine.arguments
 if arguments.contains("--selftest") {
     exit(SelfTest.run() ? 0 : 1)
 }
+// Plan numbers moved out of ~/Library/Caches (0.1.9); before anything reads or writes them.
+if !Demo.isOn { DataFolder.migrate() }
 if arguments.contains("--usage") {
     TokenMonitor.printToday()
     exit(0)

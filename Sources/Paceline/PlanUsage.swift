@@ -183,7 +183,7 @@ struct PlanUsage: Equatable, Identifiable, Sendable {
 ///   and doesn't save them, so with only the app there's nothing to read.
 enum PlanUsageReader {
     private static let home = FileManager.default.homeDirectoryForCurrentUser
-    static let ownClaudeFile = home.appendingPathComponent("Library/Caches/Paceline/claude-usage.json")
+    static let ownClaudeFile = DataFolder.url.appendingPathComponent("claude-usage.json")
     /// Where this app saved them as AgentPet; still read while an old copy writes there.
     static let legacyDir = home.appendingPathComponent("Library/Caches/AgentPet")
     static let pixpawClaudeFile = home.appendingPathComponent("Library/Caches/Pixpaw/claude-usage.json")
