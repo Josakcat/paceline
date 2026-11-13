@@ -161,6 +161,7 @@ final class TokenMonitor: @unchecked Sendable {
     private let isoPlain = ISO8601DateFormatter()
     private static let usageMarker = Data("\"usage\"".utf8)
     private static let chunkSize = 4 << 20
+    static let notTranscripts: Set = ["memory", "tool-results"]
 
     init(root: URL = TokenMonitor.mainRoot,
          onUpdate: @escaping @Sendable (UsageSnapshot, Date?) -> Void) {
@@ -172,19 +173,19 @@ final class TokenMonitor: @unchecked Sendable {
         queue.async { self.scan() }
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
-            Unmanaged<TokenMonitor>.fromOpaque(info).takeUnretainedValue().scanSoon()
+            let events = FSEvents.read(count: count, paths: paths, flags: flags)
+            Unmanaged<TokenMonitor>.fromOpaque(info).takeUnretainedValue().changed(events)
         }
         if FileManager.default.fileExists(atPath: root.path),
            let s = FSEventStreamCreate(kCFAllocatorDefault, callback, &context, [root.path] as CFArray,
-                                       FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.0,
-                                       FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)) {
+                                       FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.0, FSEvents.createFlags) {
             FSEventStreamSetDispatchQueue(s, queue)
             FSEventStreamStart(s)
             stream = s
         }
-        // Safety net for missed events and the midnight rollover.
+        // The midnight rollover, and a full walk every 5 minutes for missed events.
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now() + 30, repeating: 30)
         t.setEventHandler { [weak self] in self?.scan() }
@@ -221,10 +222,32 @@ final class TokenMonitor: @unchecked Sendable {
     // On `queue` only.
     private var lastScan = Date.distantPast
     private var pending = false
+    /// Files FSEvents named since the last pass, read on their own.
+    private var changedFiles: Set<String> = []
+    /// FSEvents lost track (dropped events, a folder to rescan): walk everything next pass.
+    private var mustWalk = false
+    private var lastWalk = Date.distantPast
+    private lazy var realRoot = root.resolvingSymlinksInPath().path
+
+    private func changed(_ events: [FSEvents.Event]) {
+        for event in events {
+            if FSEvents.mustRescan(event.flags) { mustWalk = true }
+            else if let path = Self.transcript(event.path, realRoot: realRoot, root: root.path) { changedFiles.insert(path) }
+        }
+        if mustWalk || !changedFiles.isEmpty { scanSoon() }
+    }
+
+    /// The transcript an FSEvents path names, under `root` as the walk spells it
+    /// (FSEvents gives real paths, symlinks resolved); nil for anything else.
+    static func transcript(_ path: String, realRoot: String, root: String) -> String? {
+        guard path.hasSuffix(".jsonl"), path.hasPrefix(realRoot + "/") else { return nil }
+        let rest = path.dropFirst(realRoot.count + 1)
+        if rest.split(separator: "/").dropLast().contains(where: { notTranscripts.contains(String($0)) }) { return nil }
+        return root + "/" + rest
+    }
 
     /// Claude Code appends to its transcript many times a second while it
-    /// answers; each pass walks every folder in ~/.claude/projects, so passes
-    /// are at most 3 s apart.
+    /// answers, so passes are at most 3 s apart.
     private func scanSoon() {
         guard !pending else { return }
         pending = true
@@ -237,24 +260,50 @@ final class TokenMonitor: @unchecked Sendable {
 
     @discardableResult
     private func scanFiles() -> Date? {
-        let today = Calendar.current.startOfDay(for: Date())
-        if today != dayStart {
+        let now = Date()
+        let today = Calendar.current.startOfDay(for: now)
+        let newDay = today != dayStart
+        if newDay {
             dayStart = today
             entries = [:]
             offsets = [:]
         }
+        var latestWrite: Date?
+        func note(_ modified: Date?) { if let modified { latestWrite = max(latestWrite ?? .distantPast, modified) } }
+        guard FSEvents.walkDue(lastWalk: lastWalk, now: now, newDay: newDay, mustRescan: mustWalk) else {
+            // Only the files FSEvents named, each from where the last pass stopped.
+            let files = changedFiles
+            changedFiles = []
+            for path in files { note(read(URL(fileURLWithPath: path))) }
+            return latestWrite
+        }
+        lastWalk = now
+        mustWalk = false
+        changedFiles = []
         let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else {
             return nil
         }
-        var latestWrite: Date?
-        for case let url as URL in walker where url.pathExtension == "jsonl" {
-            guard let values = try? url.resourceValues(forKeys: Set(keys)),
-                  let modified = values.contentModificationDate, modified >= dayStart,
-                  let size = values.fileSize.map(UInt64.init) else { continue }
+        for case let url as URL in walker {
+            // Notes and saved tool output, never transcripts: don't open those folders.
+            if Self.notTranscripts.contains(url.lastPathComponent) { walker.skipDescendants(); continue }
+            guard url.pathExtension == "jsonl" else { continue }
+            note(read(url))
+        }
+        return latestWrite
+    }
+
+    /// Reads what was added to one of today's transcripts since the last pass;
+    /// its modification date if it was one of today's.
+    private func read(_ url: URL) -> Date? {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey]
+        guard let values = try? url.resourceValues(forKeys: keys),
+              let modified = values.contentModificationDate, modified >= dayStart,
+              let size = values.fileSize.map(UInt64.init) else { return nil }
+        do {
             var offset = offsets[url.path] ?? 0
             if size < offset { offset = 0 }  // file was rewritten
-            guard size > offset, let handle = try? FileHandle(forReadingFrom: url) else { continue }
+            guard size > offset, let handle = try? FileHandle(forReadingFrom: url) else { return modified }
             defer { try? handle.close() }
             // Today's transcripts can be hundreds of MB; drain Foundation objects per chunk.
             var reading = true
@@ -272,9 +321,8 @@ final class TokenMonitor: @unchecked Sendable {
                 }
             }
             offsets[url.path] = offset
-            latestWrite = max(latestWrite ?? .distantPast, modified)
         }
-        return latestWrite
+        return modified
     }
 
     private func parse(_ chunk: Data) {
@@ -307,10 +355,13 @@ final class TokenMonitor: @unchecked Sendable {
 
     private func snapshot() -> UsageSnapshot {
         var s = UsageSnapshot(day: dayStart)
+        // A day has thousands of entries but a handful of models: look each one up once.
+        var prices: [String: Pricing.Price?] = [:], names: [String: String] = [:]
         for e in entries.values {
             let tokens = e.input + e.output + e.write5m + e.write1h + e.read
             var usd = 0.0
-            if let p = Pricing.price(for: e.model) {
+            if prices[e.model] == nil { prices[e.model] = .some(Pricing.price(for: e.model)) }
+            if let p = prices[e.model] ?? nil {
                 usd = (Double(e.input) * p.input + Double(e.output) * p.output
                        + Double(e.write5m) * p.input * 1.25 + Double(e.write1h) * p.input * 2
                        + Double(e.read) * p.cacheRead) / 1_000_000
@@ -319,8 +370,10 @@ final class TokenMonitor: @unchecked Sendable {
             }
             s.totalTokens += tokens
             s.totalUSD += usd
-            s.byModel[Pricing.displayName(e.model), default: UsageBucket()].tokens += tokens
-            s.byModel[Pricing.displayName(e.model), default: UsageBucket()].usd += usd
+            if names[e.model] == nil { names[e.model] = Pricing.displayName(e.model) }
+            let name = names[e.model] ?? e.model
+            s.byModel[name, default: UsageBucket()].tokens += tokens
+            s.byModel[name, default: UsageBucket()].usd += usd
             s.byProject[e.project, default: UsageBucket()].tokens += tokens
             s.byProject[e.project, default: UsageBucket()].usd += usd
         }
@@ -360,4 +413,46 @@ enum Format {
     }
 
     static func usd(_ v: Double) -> String { String(format: "$%.2f", v) }
+}
+
+/// What both monitors take from FSEvents: the paths that changed, and when to
+/// stop trusting them and walk every folder instead. Pure, except `read`.
+enum FSEvents {
+    struct Event { let path: String; let flags: FSEventStreamEventFlags }
+
+    /// Paths as CFStrings, one event per file, and RootChanged for a watched folder that moves.
+    static let createFlags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents
+                                                      | kFSEventStreamCreateFlagWatchRoot)
+    /// A full walk at most this often while events keep coming, for anything they missed.
+    static let walkEvery: TimeInterval = 5 * 60
+
+    static func read(count: Int, paths: UnsafeMutableRawPointer, flags: UnsafePointer<FSEventStreamEventFlags>) -> [Event] {
+        let list = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as? [String] ?? []
+        return list.prefix(count).enumerated().map { Event(path: $1, flags: flags[$0]) }
+    }
+
+    /// FSEvents lost track: the path is only "something under here changed".
+    static func mustRescan(_ flags: FSEventStreamEventFlags) -> Bool {
+        let lost = kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped
+            | kFSEventStreamEventFlagKernelDropped | kFSEventStreamEventFlagRootChanged
+        return flags & FSEventStreamEventFlags(lost) != 0
+    }
+
+    /// Walk every folder: the first pass, a new day, lost events, or 5 minutes since the last walk.
+    static func walkDue(lastWalk: Date, now: Date, newDay: Bool, mustRescan: Bool) -> Bool {
+        newDay || mustRescan || now.timeIntervalSince(lastWalk) >= walkEvery
+    }
+
+    /// The path below the first of `roots` it is under ("" for a root itself).
+    static func relative(_ path: String, roots: [String]) -> String {
+        guard let root = roots.first(where: { path.hasPrefix($0 + "/") }) else { return "" }
+        return String(path.dropFirst(root.count + 1))
+    }
+
+    /// Which watched folders a changed path is under (`roots[i]` are source i's
+    /// folders, real paths); a path under none of them names nothing.
+    static func owners(of path: String, roots: [[String]]) -> Set<Int> {
+        let path = path.hasSuffix("/") ? String(path.dropLast()) : path
+        return Set(roots.indices.filter { i in roots[i].contains { path == $0 || path.hasPrefix($0 + "/") } })
+    }
 }

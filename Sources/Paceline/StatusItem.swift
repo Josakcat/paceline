@@ -19,6 +19,22 @@ final class StatusItemController: NSObject {
         var low = false     // orange, this AI only
         var rows: [AIReading.Row] = []  // Two rows: 5h over Week; empty = `text` alone
         var stale = false   // old data: dimmed
+        /// What the icon shows (the AI and its badge): a new NSImage each update says nothing.
+        var iconKey: String? = nil
+
+        /// Draws the same: same logo, text and colours (a Row's countdown only matters as orange or not).
+        func drawsLike(_ other: Segment) -> Bool {
+            (iconKey != nil ? iconKey == other.iconKey : icon === other.icon) && (icon == nil) == (other.icon == nil)
+                && label == other.label && text == other.text && low == other.low && stale == other.stale
+                && rows.map { [$0.text, $0.window, "\($0.low)", "\($0.warn)"] } == other.rows.map { [$0.text, $0.window, "\($0.low)", "\($0.warn)"] }
+        }
+    }
+
+    /// Nothing to redraw: every segment draws the same and nothing else changed.
+    static func sameDrawing(_ a: [Segment], _ b: [Segment], warning: Bool, _ otherWarning: Bool, tooltip: String?, _ otherTooltip: String?,
+                            spoken: String?, _ otherSpoken: String?, style: MenuBarStyle, _ otherStyle: MenuBarStyle) -> Bool {
+        a.count == b.count && zip(a, b).allSatisfy { $0.drawsLike($1) }
+            && warning == otherWarning && tooltip == otherTooltip && spoken == otherSpoken && style == otherStyle
     }
 
     /// The last update, redrawn when the menu bar turns light or dark.
@@ -43,19 +59,23 @@ final class StatusItemController: NSObject {
             appearanceObservation = item.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
                 MainActor.assumeIsolated {
                     guard let self, let last = self.last, last.style == .twoRows else { return }
-                    self.update(segments: last.segments, warning: last.warning, tooltip: last.tooltip, spoken: last.spoken, style: last.style)
+                    self.update(segments: last.segments, warning: last.warning, tooltip: last.tooltip, spoken: last.spoken, style: last.style, force: true)
                 }
             }
             self.item = item
         } else if !visible, let item {
             NSStatusBar.system.removeStatusItem(item)
             self.item = nil
+            last = nil  // a new item starts blank: draw the next update
         }
     }
 
     /// `spoken` is what VoiceOver reads: the logos and the Two rows image say nothing.
-    func update(segments: [Segment], warning: Bool, tooltip: String? = nil, spoken: String? = nil, style: MenuBarStyle = .compact) {
+    /// The same values as last time draw nothing, unless `force` (the bar turned light or dark).
+    func update(segments: [Segment], warning: Bool, tooltip: String? = nil, spoken: String? = nil, style: MenuBarStyle = .compact, force: Bool = false) {
         guard let item, let button = item.button else { return }
+        if !force, let last, Self.sameDrawing(last.segments, segments, warning: last.warning, warning, tooltip: last.tooltip, tooltip,
+                                               spoken: last.spoken, spoken, style: last.style, style) { return }
         last = (segments, warning, tooltip, spoken, style)
         button.toolTip = tooltip
         button.setAccessibilityLabel(spoken.map { "AI Usage: \($0)" } ?? "AI Usage")

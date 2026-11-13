@@ -31,6 +31,7 @@ enum SelfTest {
         failures += accountSwitchTests()
         failures += statusLineTests()
         failures += reportTests()
+        failures += cpuLeanTests()
         print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
         return failures == 0
     }

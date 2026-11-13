@@ -184,7 +184,7 @@ final class AppController {
         let segments = shown.map { reading in
             let icon = AILogos.menuBarIcon(for: reading.name, badge: reading.badge)
             return StatusItemController.Segment(icon: icon, label: nil, text: reading.text, low: reading.low || reading.rows.first?.runsOut != nil,
-                                               rows: reading.rows, stale: reading.staleNote != nil)
+                                               rows: reading.rows, stale: reading.staleNote != nil, iconKey: "\(reading.name)|\(reading.badge ?? "")")
         }
         let tooltip = AIReading.tooltip(readings)
         statusItem.update(segments: segments, warning: shown.contains(where: \.low),

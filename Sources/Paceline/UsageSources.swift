@@ -57,11 +57,15 @@ protocol UsageSource: Sendable {
     var isInstalled: Bool { get }
     /// How many folders down a change can be (a file in tasks/<id>/ is 2).
     var changeDepth: Int { get }
+    /// A changed file (its path under a watched folder) that can't move the numbers.
+    func ignoresChange(_ relativePath: String) -> Bool
     func usage(since dayStart: Date) -> SourceUsage
 }
 
 extension UsageSource {
     var changeDepth: Int { 1 }
+    /// A SQLite -shm changes whenever anyone (Paceline too) opens the database.
+    func ignoresChange(_ relativePath: String) -> Bool { relativePath.hasSuffix("-shm") }
 }
 
 // MARK: - Antigravity
@@ -153,6 +157,7 @@ struct CodexSource: UsageSource {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
     }
     let root = CodexSource.home
+    static let logs = CodexLogCache()
     var sessions: URL { root.appendingPathComponent("sessions") }
 
     /// The folder itself (state_5.sqlite-wal changes with every turn), plus
@@ -161,6 +166,12 @@ struct CodexSource: UsageSource {
         [root] + Self.dayFolders(in: sessions, days: 2).filter { FileManager.default.fileExists(atPath: $0.path) }
     }
     var isInstalled: Bool { FileManager.default.fileExists(atPath: root.path) }
+
+    /// Only rollouts and the threads table count: Codex's own logs database
+    /// and plugin cache change all the time and say nothing about usage.
+    func ignoresChange(_ relativePath: String) -> Bool {
+        relativePath.hasSuffix("-shm") || !["sessions/", "archived_sessions/", "state_"].contains { relativePath.hasPrefix($0) }
+    }
 
     /// sessions/YYYY/MM/DD (local time, Gregorian even when the Mac uses the
     /// Buddhist calendar) for today and the days before it.
@@ -200,13 +211,11 @@ struct CodexSource: UsageSource {
         }
 
         for path in rollouts {
-            autoreleasepool {
-                guard let data = FileManager.default.contents(atPath: path) else { return }
-                let log = CodexLog.read(data, since: dayStart)
-                for (model, counts) in log.byModel { result.byModel[model, default: TokenCounts()] += counts }
-                if let t = log.lastActivity { result.lastActivity = max(result.lastActivity ?? t, t) }
-            }
+            guard let log = Self.logs.read(path, since: dayStart) else { continue }
+            for (model, counts) in log.byModel { result.byModel[model, default: TokenCounts()] += counts }
+            if let t = log.lastActivity { result.lastActivity = max(result.lastActivity ?? t, t) }
         }
+        Self.logs.keep(only: rollouts)
 
         var counted = 0, skipped = 0
         for thread in totalsOnly where thread.tokens > 0 {
@@ -220,6 +229,38 @@ struct CodexSource: UsageSource {
                        skipped > 0 ? "\(skipped) threads started before today have no rollout and were skipped" : nil]
             .compactMap { $0 }.joined(separator: "; ").nonEmpty
         return result
+    }
+}
+
+/// `CodexLog.read` per rollout, kept until the file's size or date changes or
+/// the day turns. A day's rollouts can be tens of MB and the folder changes
+/// with every turn, so only the file being written is read again.
+final class CodexLogCache: @unchecked Sendable {
+    private struct Entry { let size: UInt64; let modified: Date; let dayStart: Date; let result: CodexLog.Result }
+    private var entries: [String: Entry] = [:]
+    private let lock = NSLock()
+    /// Files actually parsed, for the self-test.
+    private(set) var reads = 0
+
+    func read(_ path: String, since dayStart: Date) -> CodexLog.Result? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        let size = (attributes?[.size] as? NSNumber)?.uint64Value, modified = attributes?[.modificationDate] as? Date
+        lock.lock(); defer { lock.unlock() }
+        if let e = entries[path], e.size == size, e.modified == modified, e.dayStart == dayStart { return e.result }
+        entries[path] = nil
+        return autoreleasepool {
+            guard let data = FileManager.default.contents(atPath: path) else { return nil }
+            reads += 1
+            let result = CodexLog.read(data, since: dayStart)
+            if let size, let modified { entries[path] = Entry(size: size, modified: modified, dayStart: dayStart, result: result) }
+            return result
+        }
+    }
+
+    /// Forgets files that are no longer among today's rollouts.
+    func keep(only paths: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        entries = entries.filter { paths.contains($0.key) }
     }
 }
 
@@ -334,8 +375,9 @@ enum CodexLog {
 
 // MARK: - Monitor
 
-/// Rescans every installed source when its folder changes (FSEvents, at most
-/// every 5 s) and once a minute for the midnight rollover.
+/// Rescans an installed source when its folder changes (FSEvents names which,
+/// at most every 5 s), every source on a new day, and every 5 minutes the ones
+/// whose files' dates changed, for events FSEvents missed.
 final class SourcesMonitor: @unchecked Sendable {
     private let sources: [any UsageSource]
     private let queue = DispatchQueue(label: "paceline.sources", qos: .utility)
@@ -345,8 +387,16 @@ final class SourcesMonitor: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var lastScan = Date.distantPast
     private var pending = false
-    private var lastSignature: [Date] = []
+    private var lastSignature: [[Date]] = []
     private var lastDay = Date.distantPast
+    private var lastWalk = Date.distantPast
+    /// Each source's watched folders as FSEvents spells them (symlinks resolved).
+    private var realRoots: [[String]] = []
+    /// Sources FSEvents named since the last pass; `mustWalk` when it lost track.
+    private var changed: Set<Int> = []
+    private var mustWalk = false
+    /// Each source's last numbers, kept until it changes.
+    private var results: [SourceUsage?] = []
 
     init(sources: [any UsageSource] = UsageSources.all, onUpdate: @escaping @Sendable ([SourceUsage]) -> Void) {
         self.sources = sources.filter(\.isInstalled)
@@ -355,16 +405,20 @@ final class SourcesMonitor: @unchecked Sendable {
 
     func start() {
         guard !sources.isEmpty else { return }
-        queue.async { self.scan() }
+        queue.async {
+            self.realRoots = self.sources.map { $0.watchPaths.map { $0.resolvingSymlinksInPath().path } }
+            self.scan()
+        }
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info else { return }
-            Unmanaged<SourcesMonitor>.fromOpaque(info).takeUnretainedValue().scanSoon()
+            let events = FSEvents.read(count: count, paths: paths, flags: flags)
+            Unmanaged<SourcesMonitor>.fromOpaque(info).takeUnretainedValue().changed(events)
         }
         let paths = sources.flatMap(\.watchPaths).map(\.path)
         if let s = FSEventStreamCreate(kCFAllocatorDefault, callback, &context, paths as CFArray,
-                                       FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 2.0, 0) {
+                                       FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 2.0, FSEvents.createFlags) {
             FSEventStreamSetDispatchQueue(s, queue)
             FSEventStreamStart(s)
             stream = s
@@ -388,6 +442,17 @@ final class SourcesMonitor: @unchecked Sendable {
         }
     }
 
+    private func changed(_ events: [FSEvents.Event]) {
+        for event in events {
+            if FSEvents.mustRescan(event.flags) { mustWalk = true }
+            else {
+                for i in FSEvents.owners(of: event.path, roots: realRoots)
+                where !sources[i].ignoresChange(FSEvents.relative(event.path, roots: realRoots[i])) { changed.insert(i) }
+            }
+        }
+        if mustWalk || !changed.isEmpty { scanSoon() }
+    }
+
     /// Antigravity writes its database many times per answer; coalesce those.
     private func scanSoon() {
         guard !pending else { return }
@@ -400,19 +465,30 @@ final class SourcesMonitor: @unchecked Sendable {
     }
 
     private func scan() {
-        lastScan = Date()
-        let dayStart = Calendar.current.startOfDay(for: Date())
-        // Skip the work (opening every database) when nothing in the watched
-        // folders changed since the last pass and it's still the same day.
-        let signature = sources.flatMap { source in source.watchPaths.map { Self.newestChange(in: $0, depth: source.changeDepth) } }
-        guard signature != lastSignature || dayStart != lastDay else { return }
-        lastSignature = signature
+        let now = Date()
+        lastScan = now
+        let dayStart = Calendar.current.startOfDay(for: now)
+        let newDay = dayStart != lastDay
         lastDay = dayStart
-        onUpdate(sources.map { source in
-            var usage = source.usage(since: dayStart)
+        var redo = changed
+        changed = []
+        if results.count != sources.count { results = Array(repeating: nil, count: sources.count) }
+        if FSEvents.walkDue(lastWalk: lastWalk, now: now, newDay: newDay, mustRescan: mustWalk) {
+            // Walk the folders' dates (no databases opened) and redo only the sources whose dates moved.
+            lastWalk = now
+            mustWalk = false
+            let signature = sources.map { source in source.watchPaths.map { Self.newestChange(in: $0, depth: source.changeDepth) } }
+            for i in sources.indices where newDay || lastSignature.count != sources.count || signature[i] != lastSignature[i] { redo.insert(i) }
+            lastSignature = signature
+        }
+        redo.formUnion(results.indices.filter { results[$0] == nil })
+        guard !redo.isEmpty else { return }
+        for i in redo {
+            var usage = sources[i].usage(since: dayStart)
             usage.day = dayStart
-            return usage
-        })
+            results[i] = usage
+        }
+        onUpdate(results.compactMap { $0 })
     }
 
     /// The newest modification `depth` levels down (a file rewritten in place
