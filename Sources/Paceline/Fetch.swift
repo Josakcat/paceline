@@ -23,18 +23,22 @@ enum FreshLimits {
         let at: Date?                           // when its plan was saved, if it was
     }
 
-    /// An account whose `get_usage` answered with no `rate_limits` isn't asked
-    /// again by itself for this long: it stays empty until that account sends a
-    /// real message, and its numbers come from the status line meanwhile.
+    /// An account with no saved plan whose `get_usage` answered with no
+    /// `rate_limits` isn't asked again by itself for this long: it stays empty
+    /// until that account sends a real message.
     static let quietAfterEmpty: TimeInterval = 6 * 60 * 60
+    /// An account that has had numbers before can answer empty now and then
+    /// (and may have no status line to fill in), so it's asked again sooner.
+    static let quietAfterEmptyKnown: TimeInterval = 60 * 60
 
     /// Who to ask now: a missing or 15-minute-old plan, not asked in the last
-    /// 15 minutes, and not answered empty (`emptyAt`) in the last 6 hours.
+    /// 15 minutes, and not answered empty (`emptyAt`) in the last 6 hours
+    /// (1 hour if it has a saved plan, `at`).
     static func due(_ targets: [Target], lastAsked: [String: Date], emptyAt: [String: Date] = [:], now: Date = Date()) -> [Target] {
         targets.filter { target in
             (target.at.map { now.timeIntervalSince($0) >= every } ?? true)
                 && (lastAsked[target.id].map { now.timeIntervalSince($0) >= every } ?? true)
-                && (emptyAt[target.id].map { now.timeIntervalSince($0) >= quietAfterEmpty } ?? true)
+                && (emptyAt[target.id].map { now.timeIntervalSince($0) >= (target.at == nil ? quietAfterEmpty : quietAfterEmptyKnown) } ?? true)
         }
     }
 

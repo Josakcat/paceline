@@ -649,7 +649,7 @@ enum SelfTest {
               && fablePlan?.windows.map(\.label) == ["Week", PlanWindow.fableWeek],
               "model_scoped Fable 40% used → Fable week 60% left, under Week, a 7-day round")
         check(AppModel.planSummary([fablePlan].compactMap { $0 }) == "Week 88% · Fable week 60% left", "Accounts ⓘ: Week 88% · Fable week 60% left")
-        let kept = PlanUsageReader.merged(["five_hour": ["used": 10, "resets_at": 1_794_110_000]], into: fableSaved)
+        let kept = PlanUsageReader.merged(["five_hour": ["used": 10, "resets_at": 1_794_110_000]], into: fableSaved, now: fableNow)
         check(kept["seven_day_fable"] != nil, "a status-line update (5h and week only) keeps the fetched Fable week")
         let lowFable = PlanUsage(agent: "Claude", windows: [PlanWindow(label: "Week", left: 80, resets: fableNow.addingTimeInterval(86400)),
                                                             PlanWindow(label: PlanWindow.fableWeek, left: 5, resets: fableNow.addingTimeInterval(86400))], at: fableNow)
@@ -689,8 +689,14 @@ enum SelfTest {
               "asked a minute ago: not again for 15 minutes")
         check(FreshLimits.due(targets, lastAsked: ["claude": now.addingTimeInterval(-16 * 60)], now: now).map(\.id) == ["claude", "antigravity"],
               "15 minutes later: asked again")
-        check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["claude": now.addingTimeInterval(-3600)], now: now).map(\.id) == ["antigravity"],
-              "answered empty an hour ago: left alone")
+        check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["claude": now.addingTimeInterval(-30 * 60)], now: now).map(\.id) == ["antigravity"],
+              "had numbers, answered empty 30 minutes ago: left alone")
+        let home2 = FreshLimits.Target(id: "two", kind: .claude(configDir: "/tmp/home/.claude-two"), at: nil)
+        check(FreshLimits.due([home2], lastAsked: [:], emptyAt: ["two": now.addingTimeInterval(-2 * 3600)], now: now).isEmpty,
+              "never had numbers, answered empty 2 hours ago: still left alone (6 hours)")
+        let known2 = FreshLimits.Target(id: "two", kind: .claude(configDir: "/tmp/home/.claude-two"), at: now.addingTimeInterval(-20 * 60))
+        check(FreshLimits.due([known2], lastAsked: [:], emptyAt: ["two": now.addingTimeInterval(-2 * 3600)], now: now).map(\.id) == ["two"],
+              "had numbers 20 minutes old, answered empty 2 hours ago: asked again (1 hour)")
         check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["claude": now.addingTimeInterval(-7 * 3600)], now: now).map(\.id) == ["claude", "antigravity"],
               "answered empty 7 hours ago: asked again")
         check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["work": now.addingTimeInterval(-3600)], now: now).map(\.id) == ["claude", "antigravity"],
@@ -743,7 +749,7 @@ enum SelfTest {
 
         // Updates: tags compared number by number.
         check(Updates.isNewer("v0.2.0", than: "0.1.0") && Updates.isNewer("0.1.10", than: "0.1.9") && Updates.isNewer("v1.0", than: "0.9.9"), "newer versions")
-        check(!Updates.isNewer("v0.1.0", than: "0.1.0") && !Updates.isNewer("0.1", than: "0.1.0") && !Updates.isNewer("0.0.9", than: "0.1.0"), "same or older isn't")
+        check(!Updates.isNewer("v0.1.0", than: "0.1.0") && !Updates.isNewer("0.1", than: "0.1.0") && !Updates.isNewer("0.0.9", than: "0.1.0") && !Updates.isNewer("0.1.9", than: "0.1.10") && !Updates.isNewer("v0.1.9", than: "0.1.10"), "same or older isn't")
 
         // Prices: Gemini by date, OpenAI by exact id, unknown stays unknown.
         let nov = calendar.date(from: DateComponents(year: 2026, month: 11, day: 8))!, jan = calendar.date(from: DateComponents(year: 2027, month: 1, day: 2))!
