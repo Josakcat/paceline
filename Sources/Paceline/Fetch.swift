@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// "Fetch fresh numbers when stale" (off unless turned on): when a plan is
 /// over 15 minutes old, or missing, the AIs' own commands are asked for it.
@@ -27,18 +28,17 @@ enum FreshLimits {
     /// `rate_limits` isn't asked again by itself for this long: it stays empty
     /// until that account sends a real message.
     static let quietAfterEmpty: TimeInterval = 6 * 60 * 60
-    /// An account that has had numbers before can answer empty now and then
-    /// (and may have no status line to fill in), so it's asked again sooner.
-    static let quietAfterEmptyKnown: TimeInterval = 60 * 60
 
     /// Who to ask now: a missing or 15-minute-old plan, not asked in the last
-    /// 15 minutes, and not answered empty (`emptyAt`) in the last 6 hours
-    /// (1 hour if it has a saved plan, `at`).
+    /// 15 minutes, and, with no saved plan (`at` nil), not answered empty
+    /// (`emptyAt`) in the last 6 hours. An account that has had numbers can
+    /// answer empty now and then (say, right after a wake with no network yet),
+    /// so an empty answer doesn't quiet it: it's asked again in 15 minutes.
     static func due(_ targets: [Target], lastAsked: [String: Date], emptyAt: [String: Date] = [:], now: Date = Date()) -> [Target] {
         targets.filter { target in
             (target.at.map { now.timeIntervalSince($0) >= every } ?? true)
                 && (lastAsked[target.id].map { now.timeIntervalSince($0) >= every } ?? true)
-                && (emptyAt[target.id].map { now.timeIntervalSince($0) >= (target.at == nil ? quietAfterEmpty : quietAfterEmptyKnown) } ?? true)
+                && (target.at != nil || (emptyAt[target.id].map { now.timeIntervalSince($0) >= quietAfterEmpty } ?? true))
         }
     }
 
@@ -61,9 +61,18 @@ enum FreshLimits {
         ["\(home)/.local/bin/agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy"].first(where: FileManager.default.isExecutableFile)
     }
 
-    /// Asks and saves. Blocks: call off the main thread.
+    private static let log = Logger(subsystem: "com.josakcat.paceline", category: "fetch")
+
+    /// Asks and saves. Blocks: call off the main thread. Logs only the id and
+    /// the outcome (`log show --predicate 'subsystem == "com.josakcat.paceline"'`).
     @discardableResult
     static func fetch(_ target: Target) -> Outcome {
+        let outcome = ask(target)
+        log.notice("fetch \(target.id, privacy: .public): \(String(describing: outcome), privacy: .public)")
+        return outcome
+    }
+
+    private static func ask(_ target: Target) -> Outcome {
         switch target.kind {
         case .claude(let configDir):
             guard let command = claudeCommand, let limits = askClaude(command, configDir: configDir) else { return .failed }

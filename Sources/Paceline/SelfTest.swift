@@ -689,16 +689,16 @@ enum SelfTest {
               "asked a minute ago: not again for 15 minutes")
         check(FreshLimits.due(targets, lastAsked: ["claude": now.addingTimeInterval(-16 * 60)], now: now).map(\.id) == ["claude", "antigravity"],
               "15 minutes later: asked again")
-        check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["claude": now.addingTimeInterval(-30 * 60)], now: now).map(\.id) == ["antigravity"],
-              "had numbers, answered empty 30 minutes ago: left alone")
         let home2 = FreshLimits.Target(id: "two", kind: .claude(configDir: "/tmp/home/.claude-two"), at: nil)
         check(FreshLimits.due([home2], lastAsked: [:], emptyAt: ["two": now.addingTimeInterval(-2 * 3600)], now: now).isEmpty,
               "never had numbers, answered empty 2 hours ago: still left alone (6 hours)")
         let known2 = FreshLimits.Target(id: "two", kind: .claude(configDir: "/tmp/home/.claude-two"), at: now.addingTimeInterval(-20 * 60))
-        check(FreshLimits.due([known2], lastAsked: [:], emptyAt: ["two": now.addingTimeInterval(-2 * 3600)], now: now).map(\.id) == ["two"],
-              "had numbers 20 minutes old, answered empty 2 hours ago: asked again (1 hour)")
-        check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["claude": now.addingTimeInterval(-7 * 3600)], now: now).map(\.id) == ["claude", "antigravity"],
-              "answered empty 7 hours ago: asked again")
+        check(FreshLimits.due([known2], lastAsked: ["two": now.addingTimeInterval(-20 * 60)], emptyAt: ["two": now.addingTimeInterval(-5 * 60)], now: now).map(\.id) == ["two"],
+              "had numbers 20 minutes old, answered empty 5 minutes ago, asked 20 minutes ago: asked again (no quiet)")
+        check(FreshLimits.due([known2], lastAsked: ["two": now.addingTimeInterval(-5 * 60)], now: now).isEmpty,
+              "had numbers 20 minutes old, asked 5 minutes ago: not again for 15 minutes")
+        check(FreshLimits.due([home2], lastAsked: [:], emptyAt: ["two": now.addingTimeInterval(-7 * 3600)], now: now).map(\.id) == ["two"],
+              "never had numbers, answered empty 7 hours ago: asked again")
         check(FreshLimits.due(targets, lastAsked: [:], emptyAt: ["work": now.addingTimeInterval(-3600)], now: now).map(\.id) == ["claude", "antigravity"],
               "another account's empty answer doesn't hold this one back")
 
